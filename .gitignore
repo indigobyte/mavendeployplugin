@@ -1,0 +1,7 @@
+target
+.idea/**/workspace.xml
+.idea/**/tasks.xml
+.idea/**/uiDesigner.xml
+.idea/deployment.xml
+node_modules
+settings.xml
