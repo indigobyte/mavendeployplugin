@@ -131,7 +131,7 @@ public class WarDeployer extends AbstractMojo {
                 for (Path curFile : filesToRemove) {
                     Path pathOfFileToDelete = remoteAppRoot.resolve(curFile);
                     String nameOfFileToDelete = Utils.linuxPathWithoutSlash(pathOfFileToDelete);
-                    getLog().info("Trying to delete file " + Utils.linuxPath(pathOfFileToDelete) + ", curFile=" + curFile + ", pathOfFileToDelete=" + pathOfFileToDelete);
+                    getLog().info("Removing " + Utils.linuxPath(pathOfFileToDelete));
                     root.node(nameOfFileToDelete, null).deleteFile();
                 }
                 getLog().info("Old file(s) were deleted from the remote machine");
