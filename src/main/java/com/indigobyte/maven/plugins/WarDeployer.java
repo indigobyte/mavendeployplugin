@@ -51,7 +51,6 @@ import java.util.Properties;
 
 @Mojo(name = "deploy-war")
 public class WarDeployer extends AbstractMojo {
-    private final static Path REMOTE_TEMP_ARCHIVE_PATH = Paths.get("/tmp/changes.zip");
     @Parameter(property = "deploy.warName", required = true)
     private String warName;
 
@@ -70,12 +69,16 @@ public class WarDeployer extends AbstractMojo {
     @Parameter(defaultValue = "${project.build.directory}")
     private String projectBuildDir;
 
+    @Parameter(property = "deploy.nginxCacheDir", required = true)
+    private String nginxCacheDir;
+
     public void execute() throws MojoExecutionException, MojoFailureException {
         getLog().info("WarDeployer mojo has started");
 
         try (World world = new World(OS.CURRENT, new Settings("UTF-8", "\n"), new Buffer(), (FileFilesystem) null, (MemoryFilesystem) null, new String[]{"**/.svn", "**/.svn/**/*"})) {
             Path remoteAppRoot = Paths.get(remoteWebApps, warName);
             Path localAppRoot = Paths.get(projectBuildDir, warName);
+            Path nginxCache = Paths.get(nginxCacheDir);
 
             world.withStandardFilesystems(false);
             world.loadNetRcOpt();
@@ -94,16 +97,14 @@ public class WarDeployer extends AbstractMojo {
             if (!remoteAppRootNode.exists()) {
                 getLog().info("Creating remote directory for application at " + Utils.linuxPath(remoteAppRoot));
                 remoteAppRootNode.mkdir();
-            }
-            else {
+            } else {
                 if (!remoteAppRootNode.isDirectory()) {
                     getLog().error(Utils.linuxPath(remoteAppRoot) + " is not a directory!");
                     throw new MojoFailureException(Utils.linuxPath(remoteAppRoot) + " is not a directory!");
                 }
                 if (!remoteAppRootNode.list().isEmpty()) {
                     digestLines = Arrays.asList(root.exec("cd " + Utils.linuxPath(remoteAppRoot) + ";find . -type f -print0 | xargs -0 md5sum").split("\r+\n"));
-                }
-                else {
+                } else {
                     getLog().info(Utils.linuxPath(remoteAppRoot) + " is empty");
                 }
             }
@@ -116,11 +117,11 @@ public class WarDeployer extends AbstractMojo {
                 FileNode tempFile = world.getTemp().createTempFile();
                 getLog().info("Archive containing changed and new files will be created in temporary file " + tempFile.getName());
                 Utils.createAchive(filesToCopy, localAppRoot, tempFile.getAbsolute());
-                Node remoteTempArchive = root.node(Utils.linuxPathWithoutSlash(REMOTE_TEMP_ARCHIVE_PATH), null);
+                Node remoteTempArchive = root.node("tmp/" + tempFile.getName(), null);
                 getLog().info("Copying local file " + tempFile.getAbsolute() + " to " + remoteTempArchive.getPath());
                 tempFile.copyFile(remoteTempArchive);
                 getLog().info("Unpacking remote archive");
-                String jarOutput = root.exec("cd " + Utils.linuxPath(remoteAppRoot) + ";jar xvf " + Utils.linuxPath(REMOTE_TEMP_ARCHIVE_PATH));
+                String jarOutput = root.exec("cd " + Utils.linuxPath(remoteAppRoot) + ";jar xvf /tmp/" + tempFile.getName());
                 getLog().info("Temp archive was unpacked. Removing temporary files");
                 remoteTempArchive.deleteFile();
                 tempFile.deleteFile();
@@ -139,12 +140,17 @@ public class WarDeployer extends AbstractMojo {
             if (filesToCopy != null || filesToRemove != null) {
                 getLog().info("web.xml was touched");
                 root.exec("touch " + Utils.linuxPath(remoteAppRoot) + "/WEB-INF/web.xml");
-                getLog().info("Restarting nginx");
-                root.exec("sudo systemctl restart nginx");
-                getLog().info("Restart signal is sent");
-            }
-            else
-            {
+                SshNode nginxCacheNode = root.node(Utils.linuxPathWithoutSlash(nginxCache), null);
+                if (!nginxCacheNode.exists()) {
+                    getLog().info("Nginx cache dir " + Utils.linuxPath(nginxCache) + " doesn't exist");
+                } else if (nginxCacheNode.list().isEmpty()) {
+                    getLog().info("Nginx cache dir " + Utils.linuxPath(nginxCache) + " is empty");
+                } else {
+                    getLog().info("Purging Nginx cache dir " + Utils.linuxPath(nginxCache));
+                    root.exec("sudo /usr/bin/rm -rf " + Utils.linuxPath(nginxCache) + "/*");
+                    getLog().info("Done");
+                }
+            } else {
                 getLog().info("Nothing to do: local files are identical to the remote machine's ones");
             }
         } catch (IOException | NoSuchAlgorithmException | JSchException e) {
