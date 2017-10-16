@@ -146,8 +146,9 @@ public class WarDeployer extends AbstractMojo {
                 } else if (nginxCacheNode.list().isEmpty()) {
                     getLog().info("Nginx cache dir " + Utils.linuxPath(nginxCache) + " is empty");
                 } else {
-                    getLog().info("Purging Nginx cache dir " + Utils.linuxPath(nginxCache));
-                    root.exec("sudo /usr/bin/rm -rf " + Utils.linuxPath(nginxCache) + "/*");
+                    String purgeCommand = "sudo /usr/bin/find " + Utils.linuxPath(nginxCache) + " -mindepth 1 -delete";
+                    getLog().info("Purging nginx cache dir with command " + purgeCommand);
+                    root.exec(purgeCommand);
                     getLog().info("Done");
                 }
             } else {
