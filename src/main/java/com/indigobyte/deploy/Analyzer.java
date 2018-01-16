@@ -1,6 +1,8 @@
 package com.indigobyte.deploy;
 
 import org.apache.maven.plugin.logging.Log;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -14,6 +16,8 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.*;
 import java.util.stream.Collectors;
+
+import static com.indigobyte.deploy.Utils.MAX_SHOW_FILE_COUNT;
 
 class MyFileIterator extends SimpleFileVisitor<Path> {
     private Path path;
@@ -43,20 +47,19 @@ class MyFileIterator extends SimpleFileVisitor<Path> {
 
 public class Analyzer {
     private Path resourcePath;
-    private Map<Path, String> localChecksums;
-    private Map<Path, Map<String, Long>> localCrcs;
-    private List<Path> filesToCopy;
-    private List<Path> filesToRemove;
+    private Map<Path, String> localChecksums = new HashMap<>();
+    private Map<Path, Map<String, Long>> localCrcs = new HashMap<>();
+    private Set<Path> filesToCopy = new TreeSet<>();
+    private Set<Path> filesToRemove = new TreeSet<>();
     private List<String> remoteChecksums;
     private Map<String, Map<String, Long>> remoteCrcs;
     private Log log;
 
-    public Analyzer(Log log, Path localResourcePath, List<String> remoteChecksums, Map<String, Map<String, Long>> remoteCrcs) throws NoSuchAlgorithmException, IOException {
+    public Analyzer(Log log, Path localResourcePath, List<String> remoteChecksums, Map<String, Map<String, Long>> remoteCrcs) throws IOException {
         this.log = log;
         this.resourcePath = localResourcePath;
         this.remoteChecksums = remoteChecksums;
         this.remoteCrcs = remoteCrcs;
-        localChecksums = new HashMap<>();
         generateChecksums();
         findChangedFiles();
     }
@@ -78,33 +81,18 @@ public class Analyzer {
         return Utils.getHex(md.digest());
     }
 
-//    public long getCrc32(Path filePath) throws IOException {
-//        try (CheckedInputStream in = new CheckedInputStream(new BufferedInputStream(new FileInputStream(filePath.toFile())), new CRC32())) {
-//            final byte[] buf = new byte[4096];
-//            while (in.read(buf) != -1) ;
-//            return in.getChecksum().getValue();
-//        } catch (IOException e) {
-//            log.error("Error during crc32 calculation of file " + filePath);
-//            throw e;
-//        }
-//    }
-
     public void addFile(Path filePath) throws IOException {
-        if (filePath.endsWith(".jar")) {
-            SortedMap<String, Long> jarCrc = Utils.getCrc32OfJarFile(filePath);
-            localCrcs.put(filePath.normalize(), jarCrc);
-        } else {
+        if (filePath.getFileName().toString().toLowerCase().endsWith(".jar"))
+            localCrcs.put(filePath.normalize(), Utils.getCrc32OfJarFile(filePath));
+        else
             localChecksums.put(filePath.normalize(), getDigest(filePath));
-        }
     }
 
     private void generateChecksums() throws IOException {
         new MyFileIterator(resourcePath, this).iterate();
     }
 
-    private void findChangedFiles() throws IOException {
-        filesToCopy = new ArrayList<>();
-        filesToRemove = new ArrayList<>();
+    private void findChangedFiles() {
         //Check checksums of non-JAR files
         {
             Set<Path> remotePaths = new HashSet<>();
@@ -117,7 +105,7 @@ public class Analyzer {
                 Path filePath = resourcePath.resolve(fileName).normalize();
                 remotePaths.add(filePath);
                 if (localChecksums.containsKey(filePath)) {
-                    if (!localChecksums.get(filePath).equals(checksumOfRemoteFile))
+                    if (!Objects.equals(localChecksums.get(filePath), checksumOfRemoteFile))
                         filesToCopy.add(filePath);
                 } else {
                     filesToRemove.add(filePath);
@@ -126,6 +114,8 @@ public class Analyzer {
             //Find files which do not exist in remote location
             Set<Path> localPaths = new HashSet<>(localChecksums.keySet());
             localPaths.removeAll(remotePaths);
+            for (Path curPath : localPaths)
+                log.debug("Adding non-existing path: " + curPath);
             filesToCopy.addAll(localPaths);
         }
         //Check CRCs of JAR files
@@ -137,31 +127,63 @@ public class Analyzer {
                 Path filePath = resourcePath.resolve(fileName).normalize();
                 remotePaths.add(filePath);
                 if (localCrcs.containsKey(filePath)) {
-                    if (!localCrcs.get(filePath).equals(crcsOfFilesInsideRemoteJarFile))
+                    Map<String, Long> crcsOfFilesInsideLocalJarFile = localCrcs.get(filePath);
+                    if (!Objects.equals(crcsOfFilesInsideLocalJarFile, crcsOfFilesInsideRemoteJarFile)) {
+                        log.info("archive " + fileName + " contains files that were changed locally");
+                        Set<String> newFiles = new TreeSet<>(crcsOfFilesInsideLocalJarFile.keySet());
+                        newFiles.removeAll(crcsOfFilesInsideRemoteJarFile.keySet());
+                        Set<String> filesToRemove = new TreeSet<>(crcsOfFilesInsideRemoteJarFile.keySet());
+                        filesToRemove.removeAll(crcsOfFilesInsideLocalJarFile.keySet());
+                        Set<String> filesProbablyModified = new TreeSet<>(crcsOfFilesInsideRemoteJarFile.keySet());
+                        filesProbablyModified.removeAll(filesToRemove);
+                        Map<String, CrcHolder> modifiedFiles = new TreeMap<>();
+                        for (String fileToCheck : filesProbablyModified) {
+                            long oldCrc = crcsOfFilesInsideRemoteJarFile.get(fileToCheck);
+                            long newCrc = crcsOfFilesInsideLocalJarFile.get(fileToCheck);
+                            if (oldCrc != newCrc)
+                                modifiedFiles.put(fileToCheck, new CrcHolder(oldCrc, newCrc));
+                        }
+                        if (!newFiles.isEmpty()) {
+                            Utils.logFiles(log, newFiles, "new files in archive");
+                        }
+                        if (!filesToRemove.isEmpty()) {
+                            Utils.logFiles(log, filesToRemove, "files to remove from archive");
+                        }
+                        if (!modifiedFiles.isEmpty()) {
+                            Utils.logFiles(log, modifiedFiles.entrySet(), "files modified in archive",
+                                    entry -> "old CRC: " + entry.getValue().getOldCrc() + ", new CRC: " + entry.getValue().getNewCrc() + ", name: " + entry.getKey()
+                            );
+                        }
                         filesToCopy.add(filePath);
+                    } else {
+                        log.debug("archive " + fileName + " didn't change");
+                    }
                 } else {
+                    log.info("archive " + fileName + " will be removed from remote host");
                     filesToRemove.add(filePath);
                 }
             }
             //Find files which do not exist in remote location
             Set<Path> localPaths = new HashSet<>(localCrcs.keySet());
             localPaths.removeAll(remotePaths);
+            for (Path curPath : localPaths)
+                log.info("Adding non-existing jar: " + curPath);
             filesToCopy.addAll(localPaths);
         }
     }
 
-    public List<Path> getFilesToCopy() throws IOException {
+    public @Nullable Set<Path> getFilesToCopy() {
         if (filesToCopy.isEmpty())
             return null;
-        return new ArrayList<>(filesToCopy);
+        return new TreeSet<>(filesToCopy);
     }
 
-    public List<Path> getFilesToRemove() {
+    public @Nullable Set<Path> getFilesToRemove() {
         if (filesToRemove.isEmpty())
             return null;
         return filesToRemove.stream()
                 .map(p -> resourcePath.relativize(p))
-                .collect(Collectors.toList());
+                .collect(Collectors.toCollection(TreeSet::new));
     }
 
 }

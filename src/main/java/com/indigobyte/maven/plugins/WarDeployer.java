@@ -114,15 +114,17 @@ public class WarDeployer extends AbstractMojo {
                     throw new MojoFailureException(Utils.linuxPath(remoteAppRoot) + " is not a directory!");
                 }
                 if (!remoteAppRootNode.list().isEmpty()) {
-                    digestLines = Arrays.asList(root.exec("cd " + Utils.linuxPath(remoteAppRoot) + ";find . -type f -print0 | xargs -0 md5sum").split("\r+\n"));
-
+                    digestLines = Arrays.asList(root.exec("cd " + Utils.linuxPath(remoteAppRoot) + ";find . -type f -not -name \"*.jar\" -print0 | xargs -0 md5sum").split("\r+\n"));
+                    getLog().info("Retrieving CRCs of remote JARs");
                     String allCrc = root.exec("cd " + Utils.linuxPath(remoteAppRoot) + ";find . -type f -name \"*.jar\" -exec unzip -vl '{}' \\;");
+                    getLog().info("Retrieved CRCs of remote JARs");
                     for (String archiveCrc: allCrc.split("Archive:")) {
                         archiveCrc = archiveCrc.trim();
                         if (archiveCrc.isEmpty())
                             continue; //Skip first empty line
                         String[] archiveLines = archiveCrc.split("\r+\n");
                         String archiveFileName = archiveLines[0];
+                        getLog().debug("Analyzing CRCs of archive \"" + archiveFileName + "\"");
                         SortedMap<String, Long> curArchiveCrcMap = new TreeMap<>();
                         //archiveLines have this format:
                         /*
@@ -136,10 +138,11 @@ public class WarDeployer extends AbstractMojo {
                          which means that the file data starts at line 3 and ends at line N-1
                          */
                         for (int lineNo = 3; !archiveLines[lineNo].startsWith("--------"); ++lineNo) {
-                            String[] fileInfo = archiveLines[lineNo].split("\\w+");
+                            String[] fileInfo = archiveLines[lineNo].trim().split("\\s+");
                             String curFileName = fileInfo[7].trim();
                             String curFileCrc = fileInfo[6].trim();
-                            if (Objects.equals(curFileCrc, "00000000")) //It's a directory - skip it. We don't care about directories inside archives
+
+                            if (curFileName.endsWith("/")) //It's a directory - skip it. We don't care about directories inside archives
                                 continue;
                             curArchiveCrcMap.put(curFileName, Long.parseLong(curFileCrc, 16));
                         }
@@ -151,10 +154,11 @@ public class WarDeployer extends AbstractMojo {
             }
             Analyzer analyzer = new Analyzer(getLog(), localAppRoot, digestLines, crc32);
 
-            List<Path> filesToCopy = analyzer.getFilesToCopy();
-            List<Path> filesToRemove = analyzer.getFilesToRemove();
+            Set<Path> filesToCopy = analyzer.getFilesToCopy();
+            Set<Path> filesToRemove = analyzer.getFilesToRemove();
             if (filesToCopy != null) {
-                getLog().info(filesToCopy.size() + " changed file(s) were found");
+                Utils.logFiles(getLog(), filesToCopy, "changed files were found", Path::toString);
+
                 FileNode tempFile = world.getTemp().createTempFile();
                 getLog().info("Archive containing changed and new files will be created in temporary file " + tempFile.getName());
                 Utils.createAchive(filesToCopy, localAppRoot, tempFile.getAbsolute());
@@ -169,7 +173,8 @@ public class WarDeployer extends AbstractMojo {
                 getLog().info("Changed file(s) were uploaded to the remote machine");
             }
             if (filesToRemove != null) {
-                getLog().info(filesToRemove.size() + " file(s) must be deleted from the remote machine");
+                Utils.logFiles(getLog(), filesToRemove, "files must be deleted from the remote machine", Path::toString);
+
                 for (Path curFile : filesToRemove) {
                     Path pathOfFileToDelete = remoteAppRoot.resolve(curFile);
                     String nameOfFileToDelete = Utils.linuxPathWithoutSlash(pathOfFileToDelete);
@@ -196,7 +201,7 @@ public class WarDeployer extends AbstractMojo {
                 getLog().info("Nothing to do: local files are identical to the remote machine's ones");
             }
             root.exec(postdeployScript);
-        } catch (IOException | NoSuchAlgorithmException | JSchException e) {
+        } catch (IOException | JSchException e) {
             getLog().error(e);
             e.printStackTrace();
             throw new MojoExecutionException("Error during execution of the deploy script", e);

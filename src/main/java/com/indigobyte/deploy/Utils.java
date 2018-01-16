@@ -1,5 +1,6 @@
 package com.indigobyte.deploy;
 
+import org.apache.maven.plugin.logging.Log;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.FileNotFoundException;
@@ -7,17 +8,15 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Enumeration;
-import java.util.List;
-import java.util.SortedMap;
-import java.util.TreeMap;
+import java.util.*;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 public class Utils {
-    public static void createAchive(List<Path> filenames, Path basePath, String outFilename) throws IOException {
+    public static final int MAX_SHOW_FILE_COUNT = 10;
+    public static void createAchive(@NotNull Set<Path> filenames, @NotNull Path basePath, @NotNull String outFilename) throws IOException {
         ZipOutputStream zipFile = new ZipOutputStream(new FileOutputStream(outFilename));
         for (Path fileToCopy : filenames) {
             Path relativeFileName = basePath.relativize(fileToCopy);
@@ -62,9 +61,29 @@ public class Utils {
                 long crc = je.getCrc();
                 if (crcMap.put(name, crc) != null)
                     throw new IllegalStateException("File " + name + " is duplicated in " + filePath);
-                System.out.println(name + " is a directory");
             }
         }
         return crcMap;
     }
+    public static<T> void logFiles(@NotNull Log log, @NotNull Collection<T> files, @NotNull String header, @NotNull PrintCallback<T> printer) {
+        log.info("-------- " + header + ": " + files.size() + " --------");
+        List<T> filesWrapped = new ArrayList<>(files);
+        for (int i = 0; i < filesWrapped.size(); ++i) {
+            if (i < MAX_SHOW_FILE_COUNT)
+                log.info(printer.getData(filesWrapped.get(i)));
+            else
+                log.debug(printer.getData(filesWrapped.get(i)));
+        }
+    }
+
+    public static void logFiles(@NotNull Log log, @NotNull Collection<String> files, @NotNull String header) {
+        logFiles(log, files, header, f -> f);
+    }
+
+
+    @FunctionalInterface
+    public interface PrintCallback<T> {
+        String getData(@NotNull T obj);
+    }
+
 }
