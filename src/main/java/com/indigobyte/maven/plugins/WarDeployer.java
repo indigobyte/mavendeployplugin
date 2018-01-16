@@ -57,6 +57,9 @@ public class WarDeployer extends AbstractMojo {
     @Parameter(property = "deploy.hostName", required = true)
     private String hostName;
 
+    @Parameter(property = "deploy.port", required = false, defaultValue = "22")
+    private int port;
+
     @Parameter(property = "deploy.userName", required = true)
     private String userName;
 
@@ -90,7 +93,7 @@ public class WarDeployer extends AbstractMojo {
             world.loadNetRcOpt();
             JSch jSch = new JSch();
             jSch.addIdentity(sshKeyFile);
-            Session session = jSch.getSession(userName, hostName);
+            Session session = jSch.getSession(userName, hostName, port);
             Properties config = new Properties();
             config.put("StrictHostKeyChecking", "no");
             session.setConfig(config);
