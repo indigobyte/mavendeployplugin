@@ -72,6 +72,12 @@ public class WarDeployer extends AbstractMojo {
     @Parameter(property = "deploy.nginxCacheDir", required = true)
     private String nginxCacheDir;
 
+    @Parameter(property = "deploy.predeployScript", required = true)
+    private String predeployScript;
+
+    @Parameter(property = "deploy.postdeployScript", required = true)
+    private String postdeployScript;
+
     public void execute() throws MojoExecutionException, MojoFailureException {
         getLog().info("WarDeployer mojo has started");
 
@@ -91,6 +97,10 @@ public class WarDeployer extends AbstractMojo {
             session.connect();
             SshFilesystem remoteFs = new SshFilesystem(world, "remoteFs", jSch);
             SshRoot root = new SshRoot(remoteFs, session);
+
+            //Execute pre-deploy script
+            root.exec(predeployScript);
+
             List<String> digestLines = Collections.emptyList();
             //Create remote app root directory
             SshNode remoteAppRootNode = root.node(Utils.linuxPathWithoutSlash(remoteAppRoot), null);
@@ -154,6 +164,7 @@ public class WarDeployer extends AbstractMojo {
             } else {
                 getLog().info("Nothing to do: local files are identical to the remote machine's ones");
             }
+            root.exec(postdeployScript);
         } catch (IOException | NoSuchAlgorithmException | JSchException e) {
             getLog().error(e);
             e.printStackTrace();
