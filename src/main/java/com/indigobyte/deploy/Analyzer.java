@@ -114,8 +114,7 @@ public class Analyzer {
             //Find files which do not exist in remote location
             Set<Path> localPaths = new HashSet<>(localChecksums.keySet());
             localPaths.removeAll(remotePaths);
-            for (Path curPath : localPaths)
-                log.debug("Adding non-existing path: " + curPath);
+            Utils.logFiles(log, localPaths, "Adding non-existing file", Path::toString);
             filesToCopy.addAll(localPaths);
         }
         //Check CRCs of JAR files
@@ -166,8 +165,7 @@ public class Analyzer {
             //Find files which do not exist in remote location
             Set<Path> localPaths = new HashSet<>(localCrcs.keySet());
             localPaths.removeAll(remotePaths);
-            for (Path curPath : localPaths)
-                log.info("Adding non-existing jar: " + curPath);
+            Utils.logFiles(log, localPaths, "Adding non-existing jar", Path::toString);
             filesToCopy.addAll(localPaths);
         }
     }
