@@ -66,6 +66,8 @@ public class Utils {
         return crcMap;
     }
     public static<T> void logFiles(@NotNull Log log, @NotNull Collection<T> files, @NotNull String header, @NotNull PrintCallback<T> printer) {
+        if (files.isEmpty())
+            return;
         log.info("-------- " + header + ": " + files.size() + " --------");
         List<T> filesWrapped = new ArrayList<>(files);
         for (int i = 0; i < filesWrapped.size(); ++i) {
