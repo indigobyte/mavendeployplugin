@@ -1,21 +1,19 @@
 package com.indigobyte.deploy;
 
-import java.io.*;
-import java.nio.charset.StandardCharsets;
+import org.apache.maven.plugin.logging.Log;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.FileVisitResult;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.*;
-import java.io.IOException;
-import java.nio.file.FileVisitResult;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.nio.file.SimpleFileVisitor;
-import java.nio.file.attribute.BasicFileAttributes;
 import java.util.stream.Collectors;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipOutputStream;
 
 class MyFileIterator extends SimpleFileVisitor<Path> {
     private Path path;
@@ -45,26 +43,22 @@ class MyFileIterator extends SimpleFileVisitor<Path> {
 
 public class Analyzer {
     private Path resourcePath;
-    private Map<Path, String> checksumMap;
+    private Map<Path, String> localChecksums;
+    private Map<Path, Map<String, Long>> localCrcs;
     private List<Path> filesToCopy;
     private List<Path> filesToRemove;
-    private List<String> referenceChecksums;
+    private List<String> remoteChecksums;
+    private Map<String, Map<String, Long>> remoteCrcs;
+    private Log log;
 
-    public Analyzer(Path resourcePath, List<String> referenceChecksums) throws NoSuchAlgorithmException, IOException {
-        this.resourcePath = resourcePath;
-        this.referenceChecksums = referenceChecksums;
-        checksumMap = new HashMap<>();
+    public Analyzer(Log log, Path localResourcePath, List<String> remoteChecksums, Map<String, Map<String, Long>> remoteCrcs) throws NoSuchAlgorithmException, IOException {
+        this.log = log;
+        this.resourcePath = localResourcePath;
+        this.remoteChecksums = remoteChecksums;
+        this.remoteCrcs = remoteCrcs;
+        localChecksums = new HashMap<>();
         generateChecksums();
         findChangedFiles();
-    }
-
-    public static String getHex(byte[] bytes) {
-        StringBuilder result = new StringBuilder();
-
-        for (byte aByte : bytes) {
-            result.append(Integer.toString((aByte & 0xff) + 0x100, 16).substring(1));
-        }
-        return result.toString();
     }
 
     private String getDigest(Path filePath) throws IOException {
@@ -79,43 +73,81 @@ public class Analyzer {
         try (DigestInputStream dis = new DigestInputStream(is, md)) {
             while (dis.read(buffer) != -1) ;
         } catch (IOException e) {
-            e.printStackTrace();
+            log.error("Error during calculation of digest of file " + filePath, e);
         }
-        return getHex(md.digest());
+        return Utils.getHex(md.digest());
     }
 
+//    public long getCrc32(Path filePath) throws IOException {
+//        try (CheckedInputStream in = new CheckedInputStream(new BufferedInputStream(new FileInputStream(filePath.toFile())), new CRC32())) {
+//            final byte[] buf = new byte[4096];
+//            while (in.read(buf) != -1) ;
+//            return in.getChecksum().getValue();
+//        } catch (IOException e) {
+//            log.error("Error during crc32 calculation of file " + filePath);
+//            throw e;
+//        }
+//    }
+
     public void addFile(Path filePath) throws IOException {
-        checksumMap.put(filePath.normalize(), getDigest(filePath));
+        if (filePath.endsWith(".jar")) {
+            SortedMap<String, Long> jarCrc = Utils.getCrc32OfJarFile(filePath);
+            localCrcs.put(filePath.normalize(), jarCrc);
+        } else {
+            localChecksums.put(filePath.normalize(), getDigest(filePath));
+        }
     }
 
     private void generateChecksums() throws IOException {
-        MyFileIterator fileIterator = new MyFileIterator(resourcePath, this);
-        fileIterator.iterate();
+        new MyFileIterator(resourcePath, this).iterate();
     }
 
     private void findChangedFiles() throws IOException {
         filesToCopy = new ArrayList<>();
         filesToRemove = new ArrayList<>();
-        Set<Path> remotePaths = new HashSet<>();
-        for (String curLine: referenceChecksums) {
-            int firstSpacePos = curLine.indexOf(' ');
-            if (firstSpacePos == -1)
-                throw new IllegalArgumentException("Space separator was not found in " + curLine);
-            String digest = curLine.substring(0, firstSpacePos);
-            String fileName = curLine.substring(firstSpacePos).trim();
-            Path filePath = resourcePath.resolve(fileName).normalize();
-            remotePaths.add(filePath);
-            if (checksumMap.containsKey(filePath)) {
-                if (!checksumMap.get(filePath).equals(digest))
-                    filesToCopy.add(filePath);
-            } else {
-                filesToRemove.add(filePath);
+        //Check checksums of non-JAR files
+        {
+            Set<Path> remotePaths = new HashSet<>();
+            for (String curLine : remoteChecksums) {
+                int firstSpacePos = curLine.indexOf(' ');
+                if (firstSpacePos == -1)
+                    throw new IllegalArgumentException("Space separator was not found in " + curLine);
+                String checksumOfRemoteFile = curLine.substring(0, firstSpacePos);
+                String fileName = curLine.substring(firstSpacePos).trim();
+                Path filePath = resourcePath.resolve(fileName).normalize();
+                remotePaths.add(filePath);
+                if (localChecksums.containsKey(filePath)) {
+                    if (!localChecksums.get(filePath).equals(checksumOfRemoteFile))
+                        filesToCopy.add(filePath);
+                } else {
+                    filesToRemove.add(filePath);
+                }
             }
+            //Find files which do not exist in remote location
+            Set<Path> localPaths = new HashSet<>(localChecksums.keySet());
+            localPaths.removeAll(remotePaths);
+            filesToCopy.addAll(localPaths);
         }
-        //Find files which do not exist in remote location
-        Set<Path> localPaths = new HashSet<>(checksumMap.keySet());
-        localPaths.removeAll(remotePaths);
-        filesToCopy.addAll(localPaths);
+        //Check CRCs of JAR files
+        {
+            Set<Path> remotePaths = new HashSet<>();
+            for (Map.Entry<String, Map<String, Long>> remoteJarEntry : remoteCrcs.entrySet()) {
+                Map<String, Long> crcsOfFilesInsideRemoteJarFile = remoteJarEntry.getValue();
+                String fileName = remoteJarEntry.getKey();
+                Path filePath = resourcePath.resolve(fileName).normalize();
+                remotePaths.add(filePath);
+                if (localCrcs.containsKey(filePath)) {
+                    if (!localCrcs.get(filePath).equals(crcsOfFilesInsideRemoteJarFile))
+                        filesToCopy.add(filePath);
+                } else {
+                    filesToRemove.add(filePath);
+                }
+            }
+            //Find files which do not exist in remote location
+            Set<Path> localPaths = new HashSet<>(localCrcs.keySet());
+            localPaths.removeAll(remotePaths);
+            filesToCopy.addAll(localPaths);
+        }
     }
 
     public List<Path> getFilesToCopy() throws IOException {

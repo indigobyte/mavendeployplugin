@@ -44,10 +44,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.NoSuchAlgorithmException;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.List;
-import java.util.Properties;
+import java.util.*;
 
 @Mojo(name = "deploy-war")
 public class WarDeployer extends AbstractMojo {
@@ -105,6 +102,7 @@ public class WarDeployer extends AbstractMojo {
             root.exec(predeployScript);
 
             List<String> digestLines = Collections.emptyList();
+            Map<String, Map<String, Long>> crc32 = new HashMap<>();
             //Create remote app root directory
             SshNode remoteAppRootNode = root.node(Utils.linuxPathWithoutSlash(remoteAppRoot), null);
             if (!remoteAppRootNode.exists()) {
@@ -117,11 +115,41 @@ public class WarDeployer extends AbstractMojo {
                 }
                 if (!remoteAppRootNode.list().isEmpty()) {
                     digestLines = Arrays.asList(root.exec("cd " + Utils.linuxPath(remoteAppRoot) + ";find . -type f -print0 | xargs -0 md5sum").split("\r+\n"));
+
+                    String allCrc = root.exec("cd " + Utils.linuxPath(remoteAppRoot) + ";find . -type f -name \"*.jar\" -exec unzip -vl '{}' \\;");
+                    for (String archiveCrc: allCrc.split("Archive:")) {
+                        archiveCrc = archiveCrc.trim();
+                        if (archiveCrc.isEmpty())
+                            continue; //Skip first empty line
+                        String[] archiveLines = archiveCrc.split("\r+\n");
+                        String archiveFileName = archiveLines[0];
+                        SortedMap<String, Long> curArchiveCrcMap = new TreeMap<>();
+                        //archiveLines have this format:
+                        /*
+                        ./sshwebproxy/WEB-INF/lib/commons-fileupload.jar                      -- line 0
+                         Length   Method    Size  Cmpr    Date    Time   CRC-32   Name        -- line 1
+                        --------  ------  ------- ---- ---------- ----- --------  ----        -- line 2
+                               0  Stored        0   0% 06-25-2003 23:12 00000000  META-INF/   -- line 3
+                                             ...
+                        --------          -------  ---                            -------     -- line N-1
+                           36295            18057  50%                            24 files    -- line N
+                         which means that the file data starts at line 3 and ends at line N-1
+                         */
+                        for (int lineNo = 3; !archiveLines[lineNo].startsWith("--------"); ++lineNo) {
+                            String[] fileInfo = archiveLines[lineNo].split("\\w+");
+                            String curFileName = fileInfo[7].trim();
+                            String curFileCrc = fileInfo[6].trim();
+                            if (Objects.equals(curFileCrc, "00000000")) //It's a directory - skip it. We don't care about directories inside archives
+                                continue;
+                            curArchiveCrcMap.put(curFileName, Long.parseLong(curFileCrc, 16));
+                        }
+                        crc32.put(archiveFileName, curArchiveCrcMap);
+                    }
                 } else {
                     getLog().info(Utils.linuxPath(remoteAppRoot) + " is empty");
                 }
             }
-            Analyzer analyzer = new Analyzer(localAppRoot, digestLines);
+            Analyzer analyzer = new Analyzer(getLog(), localAppRoot, digestLines, crc32);
 
             List<Path> filesToCopy = analyzer.getFilesToCopy();
             List<Path> filesToRemove = analyzer.getFilesToRemove();

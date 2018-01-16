@@ -7,7 +7,12 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Enumeration;
 import java.util.List;
+import java.util.SortedMap;
+import java.util.TreeMap;
+import java.util.jar.JarEntry;
+import java.util.jar.JarFile;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -35,5 +40,31 @@ public class Utils {
         if (result.startsWith("/"))
             return result.substring(1);
         return result;
+    }
+
+    public static String getHex(byte[] bytes) {
+        StringBuilder result = new StringBuilder();
+
+        for (byte aByte : bytes) {
+            result.append(Integer.toString((aByte & 0xff) + 0x100, 16).substring(1));
+        }
+        return result.toString();
+    }
+
+    public static @NotNull SortedMap<String, Long> getCrc32OfJarFile(@NotNull Path filePath) throws IOException {
+        SortedMap<String, Long> crcMap = new TreeMap<>();
+        JarFile jf = new JarFile(filePath.toFile());
+        Enumeration e = jf.entries();
+        while (e.hasMoreElements()) {
+            JarEntry je = (JarEntry) e.nextElement();
+            if (!je.isDirectory()) {
+                String name = je.getName();
+                long crc = je.getCrc();
+                if (crcMap.put(name, crc) != null)
+                    throw new IllegalStateException("File " + name + " is duplicated in " + filePath);
+                System.out.println(name + " is a directory");
+            }
+        }
+        return crcMap;
     }
 }
