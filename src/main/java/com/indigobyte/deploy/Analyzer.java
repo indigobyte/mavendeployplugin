@@ -108,6 +108,7 @@ public class Analyzer {
                     if (!Objects.equals(localChecksums.get(filePath), checksumOfRemoteFile))
                         filesToCopy.add(filePath);
                 } else {
+                    log.info("file " + fileName + " will be removed from remote host");
                     filesToRemove.add(filePath);
                 }
             }
@@ -142,17 +143,10 @@ public class Analyzer {
                             if (oldCrc != newCrc)
                                 modifiedFiles.put(fileToCheck, new CrcHolder(oldCrc, newCrc));
                         }
-                        if (!newFiles.isEmpty()) {
-                            Utils.logFiles(log, newFiles, "new files in archive");
-                        }
-                        if (!filesToRemove.isEmpty()) {
-                            Utils.logFiles(log, filesToRemove, "files to remove from archive");
-                        }
-                        if (!modifiedFiles.isEmpty()) {
-                            Utils.logFiles(log, modifiedFiles.entrySet(), "files modified in archive",
-                                    entry -> "old CRC: " + entry.getValue().getOldCrc() + ", new CRC: " + entry.getValue().getNewCrc() + ", name: " + entry.getKey()
-                            );
-                        }
+                        Utils.logFiles(log, newFiles, "new files in archive");
+                        Utils.logFiles(log, filesToRemove, "files to remove from archive");
+                        Utils.logFiles(log, modifiedFiles.entrySet(), "files modified in archive", Map.Entry::getKey);
+
                         filesToCopy.add(filePath);
                     } else {
                         log.debug("archive " + fileName + " didn't change");

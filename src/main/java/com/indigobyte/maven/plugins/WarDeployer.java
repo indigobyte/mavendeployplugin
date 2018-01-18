@@ -113,8 +113,19 @@ public class WarDeployer extends AbstractMojo {
                     getLog().error(Utils.linuxPath(remoteAppRoot) + " is not a directory!");
                     throw new MojoFailureException(Utils.linuxPath(remoteAppRoot) + " is not a directory!");
                 }
-                if (!remoteAppRootNode.list().isEmpty()) {
-                    digestLines = Arrays.asList(root.exec("cd " + Utils.linuxPath(remoteAppRoot) + ";find . -type f -not -name \"*.jar\" -print0 | xargs -0 md5sum").split("\r+\n"));
+                String countFilesCommand = "find " + Utils.linuxPath(remoteAppRoot) + " -type f | wc -l";
+                getLog().info("Counting files (recursively) in remote folder " + Utils.linuxPath(remoteAppRoot) + " using command " + countFilesCommand);
+                String fileCountStr = root.exec(countFilesCommand).trim();
+                getLog().info("Files found: " + fileCountStr);
+                int fileCount = Integer.parseInt(fileCountStr);
+                if (fileCount > 0) {
+                    getLog().info("Retrieving checksums from non-empty remote directory: " + Utils.linuxPath(remoteAppRoot));
+                    String generateChecksumsCommand = "cd " + Utils.linuxPath(remoteAppRoot) + ";find . -type f -not -name \"*.jar\" -print0 | xargs -0 md5sum";
+                    getLog().info("Generating checksums with command:\n" + generateChecksumsCommand);
+                    String checksumString = root.exec(generateChecksumsCommand);
+                    getLog().debug("Checksum string:\n" + checksumString);
+                    digestLines = Arrays.asList(checksumString.split("\r+\n"));
+                    getLog().info("Received " + digestLines.size() + " checkums");
                     getLog().info("Retrieving CRCs of remote JARs");
                     String allCrc = root.exec("cd " + Utils.linuxPath(remoteAppRoot) + ";find . -type f -name \"*.jar\" -exec unzip -vl '{}' \\;");
                     getLog().info("Retrieved CRCs of remote JARs");
@@ -157,7 +168,7 @@ public class WarDeployer extends AbstractMojo {
             Set<Path> filesToCopy = analyzer.getFilesToCopy();
             Set<Path> filesToRemove = analyzer.getFilesToRemove();
             if (filesToCopy != null) {
-                Utils.logFiles(getLog(), filesToCopy, "changed files were found", Path::toString);
+                Utils.logFiles(getLog(), filesToCopy, "Changed files were found", Path::toString);
 
                 FileNode tempFile = world.getTemp().createTempFile();
                 getLog().info("Archive containing changed and new files will be created in temporary file " + tempFile.getName());
