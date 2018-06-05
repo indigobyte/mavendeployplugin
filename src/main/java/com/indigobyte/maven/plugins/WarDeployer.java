@@ -148,7 +148,9 @@ public class WarDeployer extends AbstractMojo {
                            36295            18057  50%                            24 files    -- line N
                          which means that the file data starts at line 3 and ends at line N-1
                          */
-                        for (int lineNo = 3; !archiveLines[lineNo].startsWith("--------"); ++lineNo) {
+                        int startLine = 2;
+                        for (;startLine < archiveLines.length && !archiveLines[startLine].startsWith("--------"); ++startLine);
+                        for (int lineNo = startLine + 1; !archiveLines[lineNo].startsWith("--------"); ++lineNo) {
                             String[] fileInfo = archiveLines[lineNo].trim().split("\\s+");
                             String curFileName = fileInfo[7].trim();
                             String curFileCrc = fileInfo[6].trim();
