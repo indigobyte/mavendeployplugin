@@ -78,6 +78,9 @@ public class WarDeployer extends AbstractMojo {
     @Parameter(property = "deploy.postdeployScript", required = true)
     private String postdeployScript;
 
+    @Parameter(defaultValue = "true")
+    private boolean touchWebXml;
+
     public void execute() throws MojoExecutionException, MojoFailureException {
         getLog().info("WarDeployer mojo has started");
 
@@ -197,8 +200,12 @@ public class WarDeployer extends AbstractMojo {
                 getLog().info("Old file(s) were deleted from the remote machine");
             }
             if (filesToCopy != null || filesToRemove != null) {
-                getLog().info("web.xml was touched");
-                root.exec("touch " + Utils.linuxPath(remoteAppRoot) + "/WEB-INF/web.xml");
+                if (touchWebXml) {
+                    root.exec("touch " + Utils.linuxPath(remoteAppRoot) + "/WEB-INF/web.xml");
+                    getLog().info("web.xml was touched");
+                } else {
+                    getLog().info("web.xml was not touched because touchWebXml is " + touchWebXml);
+                }
                 SshNode nginxCacheNode = root.node(Utils.linuxPathWithoutSlash(nginxCache), null);
                 if (!nginxCacheNode.exists()) {
                     getLog().info("Nginx cache dir " + Utils.linuxPath(nginxCache) + " doesn't exist");
