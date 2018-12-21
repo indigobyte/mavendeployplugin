@@ -16,7 +16,7 @@ package com.indigobyte.maven.plugins;
  * limitations under the License.
  */
 
-import com.indigobyte.deploy.Analyzer;
+import com.indigobyte.deploy.RemoteAnalyzer;
 import com.indigobyte.deploy.Utils;
 import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.JSchException;
@@ -38,12 +38,9 @@ import org.apache.maven.plugin.MojoFailureException;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 
-import java.io.File;
-import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.security.NoSuchAlgorithmException;
 import java.util.*;
 
 @Mojo(name = "deploy-war")
@@ -168,7 +165,7 @@ public class WarDeployer extends AbstractMojo {
                     getLog().info(Utils.linuxPath(remoteAppRoot) + " is empty");
                 }
             }
-            Analyzer analyzer = new Analyzer(getLog(), localAppRoot, digestLines, crc32);
+            RemoteAnalyzer analyzer = new RemoteAnalyzer(getLog(), localAppRoot, digestLines, crc32);
 
             Set<Path> filesToCopy = analyzer.getFilesToCopy();
             Set<Path> filesToRemove = analyzer.getFilesToRemove();

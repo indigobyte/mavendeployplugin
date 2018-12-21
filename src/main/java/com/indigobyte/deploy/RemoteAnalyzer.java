@@ -1,51 +1,19 @@
 package com.indigobyte.deploy;
 
 import org.apache.maven.plugin.logging.Log;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.SimpleFileVisitor;
-import java.nio.file.attribute.BasicFileAttributes;
 import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.*;
 import java.util.stream.Collectors;
 
-import static com.indigobyte.deploy.Utils.MAX_SHOW_FILE_COUNT;
-
-class MyFileIterator extends SimpleFileVisitor<Path> {
-    private Path path;
-    private Analyzer analyzer;
-
-    public MyFileIterator(Path path, Analyzer analyzer) {
-        this.path = path;
-        this.analyzer = analyzer;
-    }
-
-    @Override
-    public FileVisitResult visitFile(Path file,
-                                     BasicFileAttributes attributes) throws IOException {
-        analyzer.addFile(file);
-        return FileVisitResult.CONTINUE;
-    }
-
-    //    @Override
-//    public FileVisitResult preVisitDirectory(Path dir,
-//                                             BasicFileAttributes attributes) throws IOException {
-//        return FileVisitResult.CONTINUE;
-//    }
-    public void iterate() throws java.io.IOException {
-        Files.walkFileTree(path, this);
-    }
-}
-
-public class Analyzer {
+public class RemoteAnalyzer implements IAnalyzer {
     private Path resourcePath;
     private Map<Path, String> localChecksums = new HashMap<>();
     private Map<Path, Map<String, Long>> localCrcs = new HashMap<>();
@@ -55,7 +23,7 @@ public class Analyzer {
     private Map<String, Map<String, Long>> remoteCrcs;
     private Log log;
 
-    public Analyzer(Log log, Path localResourcePath, List<String> remoteChecksums, Map<String, Map<String, Long>> remoteCrcs) throws IOException {
+    public RemoteAnalyzer(Log log, Path localResourcePath, List<String> remoteChecksums, Map<String, Map<String, Long>> remoteCrcs) throws IOException {
         this.log = log;
         this.resourcePath = localResourcePath;
         this.remoteChecksums = remoteChecksums;
@@ -81,15 +49,13 @@ public class Analyzer {
         return Utils.getHex(md.digest());
     }
 
-    public void addFile(Path filePath) throws IOException {
-        if (filePath.getFileName().toString().toLowerCase().endsWith(".jar"))
-            localCrcs.put(filePath.normalize(), Utils.getCrc32OfJarFile(filePath));
-        else
-            localChecksums.put(filePath.normalize(), getDigest(filePath));
-    }
-
     private void generateChecksums() throws IOException {
-        new MyFileIterator(resourcePath, this).iterate();
+        for (Path file: MyFileIterator.getAllFilesAndFoldersRecursively(resourcePath)) {
+            if (file.getFileName().toString().toLowerCase().endsWith(".jar"))
+                localCrcs.put(file.normalize(), Utils.getCrc32OfJarFile(file));
+            else
+                localChecksums.put(file.normalize(), getDigest(file));
+        }
     }
 
     private void findChangedFiles() {
@@ -164,12 +130,14 @@ public class Analyzer {
         }
     }
 
+    @Override
     public @Nullable Set<Path> getFilesToCopy() {
         if (filesToCopy.isEmpty())
             return null;
         return new TreeSet<>(filesToCopy);
     }
 
+    @Override
     public @Nullable Set<Path> getFilesToRemove() {
         if (filesToRemove.isEmpty())
             return null;

@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/mavendeployplugin.iml" filepath="$PROJECT_DIR$/mavendeployplugin.iml" />
+      <module fileurl="file://$PROJECT_DIR$/cc-deploy-maven-plugin.iml" filepath="$PROJECT_DIR$/cc-deploy-maven-plugin.iml" />
     </modules>
   </component>
 </project>
