@@ -73,6 +73,11 @@ public class FolderSynchronizer extends AbstractMojo {
                 targetPath.toFile().mkdirs();
             }
         }
+        if (filesToCopy.isEmpty() && filesToRemove.isEmpty()) {
+            getLog().info("Resources didn't change");
+        } else {
+            getLog().info("Files copied: " + filesToCopy.size() + ", files removed: " + filesToRemove.size());
+        }
         try {
             analyzer.writeNewChecksums(fileWithChecksums);
         } catch (IOException e) {
