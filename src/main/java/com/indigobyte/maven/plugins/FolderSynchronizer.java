@@ -39,11 +39,15 @@ public class FolderSynchronizer extends AbstractMojo {
         }
         Set<Path> filesToRemove = analyzer.getFilesToRemove();
         for (Path path : filesToRemove) {
-            try {
-                getLog().debug("Deleting path " + path);
-                Files.delete(path);
-            } catch (IOException e) {
-                throw new MojoExecutionException("Unable to remove file / folder " + path, e);
+            if (path.toFile().exists()) {
+                try {
+                    getLog().debug("Deleting path " + path);
+                    Files.delete(path);
+                } catch (IOException e) {
+                    throw new MojoExecutionException("Unable to remove file / folder " + path, e);
+                }
+            } else {
+                getLog().debug("Path " + path + " is already deleted by third party");
             }
         }
 
