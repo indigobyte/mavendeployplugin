@@ -47,6 +47,17 @@ Where `cc-deploy-maven-plugin-1.0-SNAPSHOT.jar` is the name of the jar file with
 To test how plugin works without sending changes to server, create Maven Debug/Run configuration in IDEA and
 specify `install` in the `Command line`.
 
+### How to create new version of plugin
+
+1. Let's say git repository is cloned into local folder `C:\cc-deploy-maven-plugin`.
+1. Clone repository to separate folder, e.g. `C:\mvn-repo`.
+1. Switch to `mvn-repo` branch in that folder.
+1. Go back to folder `C:\cc-deploy-maven-plugin`
+1. Change version in `pom.xml`.
+1. Run `mvn clean install -DmvnRepo=C:\mvn-repo`. (when running on Cygwin, `\`, must be escaped: `mvn clean install -DmvnRepo=C:\\mvn-repo`)
+1. Go to folder `C:\mvn-repo`.
+1. Add new files to commit, then commit and push `mvn-repo` branch to server. 
+
 ### Maven: how to build and install locally, without uploading to remote repository
 
     mvn clean install
