@@ -1,13 +1,17 @@
 package com.indigobyte.deploy;
 
-import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.IOException;
 import java.nio.file.Path;
-import java.util.Set;
+import java.util.TreeSet;
 
 public interface IAnalyzer {
-    @Nullable Set<Path> getFilesToCopy();
+    @NotNull
+    TreeSet<Path> getFilesToCopy();
 
-    @Nullable Set<Path> getFilesToRemove();
+    @NotNull
+    TreeSet<Path> getFilesToRemove();
+
+    void writeNewChecksums(@NotNull Path fileWithChecksums) throws IOException;
 }

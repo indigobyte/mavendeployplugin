@@ -16,7 +16,7 @@ package com.indigobyte.maven.plugins;
  * limitations under the License.
  */
 
-import com.indigobyte.deploy.RemoteAnalyzer;
+import com.indigobyte.deploy.LocalAnalyzer;
 import com.indigobyte.deploy.Utils;
 import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.JSchException;
@@ -24,9 +24,7 @@ import com.jcraft.jsch.Session;
 import net.oneandone.sushi.fs.Node;
 import net.oneandone.sushi.fs.Settings;
 import net.oneandone.sushi.fs.World;
-import net.oneandone.sushi.fs.file.FileFilesystem;
 import net.oneandone.sushi.fs.file.FileNode;
-import net.oneandone.sushi.fs.memory.MemoryFilesystem;
 import net.oneandone.sushi.fs.ssh.SshFilesystem;
 import net.oneandone.sushi.fs.ssh.SshNode;
 import net.oneandone.sushi.fs.ssh.SshRoot;
@@ -38,10 +36,12 @@ import org.apache.maven.plugin.MojoFailureException;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.*;
+import java.util.Properties;
+import java.util.Set;
 
 @Mojo(name = "deploy-war")
 public class WarDeployer extends AbstractMojo {
@@ -81,8 +81,9 @@ public class WarDeployer extends AbstractMojo {
     public void execute() throws MojoExecutionException, MojoFailureException {
         getLog().info("WarDeployer mojo has started");
 
-        try (World world = new World(OS.CURRENT, new Settings("UTF-8", "\n"), new Buffer(), (FileFilesystem) null, (MemoryFilesystem) null, new String[]{"**/.svn", "**/.svn/**/*"})) {
+        try (World world = new World(OS.CURRENT, new Settings("UTF-8", "\n"), new Buffer(), null, null, "**/.svn", "**/.svn/**/*")) {
             Path remoteAppRoot = Paths.get(remoteWebApps, warName);
+            Path remoteAppChecksumFile = Paths.get(remoteWebApps, warName + ".checksums");
             Path localAppRoot = Paths.get(projectBuildDir, warName);
             Path nginxCache = Paths.get(nginxCacheDir);
 
@@ -94,15 +95,24 @@ public class WarDeployer extends AbstractMojo {
             Properties config = new Properties();
             config.put("StrictHostKeyChecking", "no");
             session.setConfig(config);
+            getLog().info("Connecting to " + hostName + ":" + port);
             session.connect();
             SshFilesystem remoteFs = new SshFilesystem(world, "remoteFs", jSch);
             SshRoot root = new SshRoot(remoteFs, session);
 
             //Execute pre-deploy script
+            getLog().info("Executing pre-deploy script " + predeployScript);
             root.exec(predeployScript);
+            getLog().info("Pre-deploy script executed");
 
-            List<String> digestLines = Collections.emptyList();
-            Map<String, Map<String, Long>> crc32 = new HashMap<>();
+            getLog().info("Checking remote checksum file" + remoteAppChecksumFile);
+            byte[] remoteChecksumFileBytes = null;
+            SshNode remoteAppChecksumFileNode = root.node(Utils.linuxPathWithoutSlash(remoteAppChecksumFile), null);
+            if (remoteAppChecksumFileNode.exists() && !remoteAppChecksumFileNode.isFile()) {
+                getLog().error(Utils.linuxPath(remoteAppChecksumFile) + " is not a file!");
+                throw new MojoFailureException(Utils.linuxPath(remoteAppChecksumFile) + " is not a file!");
+            }
+
             //Create remote app root directory
             SshNode remoteAppRootNode = root.node(Utils.linuxPathWithoutSlash(remoteAppRoot), null);
             if (!remoteAppRootNode.exists()) {
@@ -113,63 +123,20 @@ public class WarDeployer extends AbstractMojo {
                     getLog().error(Utils.linuxPath(remoteAppRoot) + " is not a directory!");
                     throw new MojoFailureException(Utils.linuxPath(remoteAppRoot) + " is not a directory!");
                 }
-                String countFilesCommand = "find " + Utils.linuxPath(remoteAppRoot) + " -type f | wc -l";
-                getLog().info("Counting files (recursively) in remote folder " + Utils.linuxPath(remoteAppRoot) + " using command " + countFilesCommand);
-                String fileCountStr = root.exec(countFilesCommand).trim();
-                getLog().info("Files found: " + fileCountStr);
-                int fileCount = Integer.parseInt(fileCountStr);
-                if (fileCount > 0) {
-                    getLog().info("Retrieving checksums from non-empty remote directory: " + Utils.linuxPath(remoteAppRoot));
-                    String generateChecksumsCommand = "cd " + Utils.linuxPath(remoteAppRoot) + ";find . -type f -not -name \"*.jar\" -print0 | xargs -0 md5sum";
-                    getLog().info("Generating checksums with command:\n" + generateChecksumsCommand);
-                    String checksumString = root.exec(generateChecksumsCommand);
-                    getLog().debug("Checksum string:\n" + checksumString);
-                    digestLines = Arrays.asList(checksumString.split("\r+\n"));
-                    getLog().info("Received " + digestLines.size() + " checkums");
-                    getLog().info("Retrieving CRCs of remote JARs");
-                    String allCrc = root.exec("cd " + Utils.linuxPath(remoteAppRoot) + ";find . -type f -name \"*.jar\" -exec unzip -vl '{}' \\;");
-                    getLog().info("Retrieved CRCs of remote JARs");
-                    for (String archiveCrc: allCrc.split("Archive:")) {
-                        archiveCrc = archiveCrc.trim();
-                        if (archiveCrc.isEmpty())
-                            continue; //Skip first empty line
-                        String[] archiveLines = archiveCrc.split("\r+\n");
-                        String archiveFileName = archiveLines[0];
-                        getLog().debug("Analyzing CRCs of archive \"" + archiveFileName + "\"");
-                        SortedMap<String, Long> curArchiveCrcMap = new TreeMap<>();
-                        //archiveLines have this format:
-                        /*
-                        ./sshwebproxy/WEB-INF/lib/commons-fileupload.jar                      -- line 0
-                         Length   Method    Size  Cmpr    Date    Time   CRC-32   Name        -- line 1
-                        --------  ------  ------- ---- ---------- ----- --------  ----        -- line 2
-                               0  Stored        0   0% 06-25-2003 23:12 00000000  META-INF/   -- line 3
-                                             ...
-                        --------          -------  ---                            -------     -- line N-1
-                           36295            18057  50%                            24 files    -- line N
-                         which means that the file data starts at line 3 and ends at line N-1
-                         */
-                        int startLine = 2;
-                        for (;startLine < archiveLines.length && !archiveLines[startLine].startsWith("--------"); ++startLine);
-                        for (int lineNo = startLine + 1; !archiveLines[lineNo].startsWith("--------"); ++lineNo) {
-                            String[] fileInfo = archiveLines[lineNo].trim().split("\\s+");
-                            String curFileName = fileInfo[7].trim();
-                            String curFileCrc = fileInfo[6].trim();
 
-                            if (curFileName.endsWith("/")) //It's a directory - skip it. We don't care about directories inside archives
-                                continue;
-                            curArchiveCrcMap.put(curFileName, Long.parseLong(curFileCrc, 16));
-                        }
-                        crc32.put(archiveFileName, curArchiveCrcMap);
-                    }
-                } else {
-                    getLog().info(Utils.linuxPath(remoteAppRoot) + " is empty");
+                if (remoteAppChecksumFileNode.exists()) {
+                    getLog().info("Downloading remote checksum file" + remoteAppChecksumFile);
+                    ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                    remoteAppChecksumFileNode.copyFileTo(bos);
+                    remoteChecksumFileBytes = bos.toByteArray();
+                    getLog().info("Remote checksum file downloaded");
                 }
             }
-            RemoteAnalyzer analyzer = new RemoteAnalyzer(getLog(), localAppRoot, digestLines, crc32);
+            LocalAnalyzer analyzer = new LocalAnalyzer(getLog(), localAppRoot, remoteChecksumFileBytes);
 
             Set<Path> filesToCopy = analyzer.getFilesToCopy();
             Set<Path> filesToRemove = analyzer.getFilesToRemove();
-            if (filesToCopy != null) {
+            if (!filesToCopy.isEmpty()) {
                 Utils.logFiles(getLog(), filesToCopy, "Changed files were found", Path::toString);
 
                 FileNode tempFile = world.getTemp().createTempFile();
@@ -185,7 +152,7 @@ public class WarDeployer extends AbstractMojo {
                 tempFile.deleteFile();
                 getLog().info("Changed file(s) were uploaded to the remote machine");
             }
-            if (filesToRemove != null) {
+            if (!filesToRemove.isEmpty()) {
                 Utils.logFiles(getLog(), filesToRemove, "files must be deleted from the remote machine", Path::toString);
 
                 for (Path curFile : filesToRemove) {
@@ -196,7 +163,22 @@ public class WarDeployer extends AbstractMojo {
                 }
                 getLog().info("Old file(s) were deleted from the remote machine");
             }
-            if (filesToCopy != null || filesToRemove != null) {
+            if (!filesToCopy.isEmpty() || !filesToRemove.isEmpty()) {
+                //Write new checksums
+                {
+                    FileNode tempFile = world.getTemp().createTempFile();
+                    analyzer.writeNewChecksums(Paths.get(tempFile.getAbsolute()));
+
+                    getLog().info("Deleting old remote checksum file " + remoteAppChecksumFileNode.getPath());
+                    if (remoteAppChecksumFileNode.exists()) {
+                        remoteAppChecksumFileNode.deleteFile();
+                    }
+                    getLog().info("Copying local file " + tempFile.getAbsolute() + " to " + remoteAppChecksumFileNode.getPath());
+                    tempFile.copyFile(remoteAppChecksumFileNode);
+                    getLog().info("Removing temporary local checksum file " + tempFile.getAbsolute());
+                    tempFile.deleteFile();
+                    getLog().info("New checksum file was uploaded to the remote machine");
+                }
                 if (touchWebXml) {
                     root.exec("touch " + Utils.linuxPath(remoteAppRoot) + "/WEB-INF/web.xml");
                     getLog().info("web.xml was touched");

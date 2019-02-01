@@ -1,23 +1,68 @@
 package com.indigobyte.deploy;
 
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
-import java.io.File;
-import java.io.Serializable;
+import java.io.*;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Comparator;
 import java.util.Objects;
+import java.util.TreeMap;
 
-public class Checksum implements Serializable {
+public class Checksum implements Serializable, Comparable<Checksum> {
+    @NotNull
     private final String filePath;
-    private final long lastModifiedDate;
     private final boolean folder;
+    @Nullable
+    private final String digest;
+//    @Nullable
+//    private final TreeMap<String, Long> jarFilesCrc32;
 
-    public Checksum(@NotNull Path file, @NotNull Path baseFolder) {
+    public Checksum(@NotNull Path file, @NotNull Path baseFolder) throws IOException {
         filePath = baseFolder.normalize().toAbsolutePath().relativize(file.normalize().toAbsolutePath()).toString();
         File file1 = file.toFile();
-        lastModifiedDate = file1.lastModified();
         folder = file1.isDirectory();
+        if (folder) {
+            digest = null;
+        } else {
+            if (!file.getName(file.getNameCount() - 1).toString().endsWith(".jar")) {
+                digest = Utils.getDigest(file);
+                //jarFilesCrc32 = null;
+            } else {
+                TreeMap<String, Long> crc32 = Utils.getCrc32OfJarFile(file);
+                try (ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+                    try (ObjectOutputStream ois = new ObjectOutputStream(baos)) {
+                        ois.writeObject(crc32);
+                    }
+                    try (ByteArrayInputStream bais = new ByteArrayInputStream(baos.toByteArray())) {
+                        digest = Utils.getDigest(bais);
+                    }
+                }
+//                jarFilesCrc32 = null;
+            }
+        }
+    }
+
+
+    @NotNull
+    public Path getPath() {
+        return Paths.get(filePath);
+    }
+
+    @Override
+    public String toString() {
+        StringBuilder sb = new StringBuilder();
+        sb.append(filePath);
+        if (folder) {
+            sb.append(", folder");
+        } else {
+            sb.append(", file, ");
+            if (digest != null) {
+                sb.append(", digest = ").append(digest);
+            }
+        }
+        return sb.toString();
     }
 
     @Override
@@ -29,25 +74,46 @@ public class Checksum implements Serializable {
             return false;
         }
         Checksum checksum = (Checksum) o;
-        return lastModifiedDate == checksum.lastModifiedDate &&
-                folder == checksum.folder &&
-                Objects.equals(filePath, checksum.filePath);
+        return folder == checksum.folder &&
+                filePath.equals(checksum.filePath) &&
+                Objects.equals(digest, checksum.digest)
+                //&&  Objects.equals(jarFilesCrc32, checksum.jarFilesCrc32)
+                ;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(filePath, lastModifiedDate, folder);
-    }
-
-    @NotNull
-    public Path getPath() {
-        return Paths.get(filePath);
+        return Objects.hash(filePath, folder, digest
+                //, jarFilesCrc32
+        );
     }
 
     @Override
-    public String toString() {
-        return filePath +
-                "[" + lastModifiedDate + "]" +
-                (folder ? ", folder" : "");
+    public int compareTo(@NotNull Checksum o) {
+        return Comparator
+                .comparing(Checksum::getFilePath)
+                .thenComparing(Checksum::isFolder)
+                .thenComparing(Checksum::getDigest, Comparator.nullsFirst(String::compareTo))
+                //.thenComparing(Checksum::getJarFilesCrc32, Comparator.nullsFirst(Comparator.comparing(Utils::toJson)))
+                .compare(this, o);
     }
+
+    @NotNull
+    public String getFilePath() {
+        return filePath;
+    }
+
+    public boolean isFolder() {
+        return folder;
+    }
+
+    @Nullable
+    public String getDigest() {
+        return digest;
+    }
+
+//    @Nullable
+//    public TreeMap<String, Long> getJarFilesCrc32() {
+//        return jarFilesCrc32;
+//    }
 }

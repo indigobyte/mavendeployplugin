@@ -17,6 +17,8 @@
         <github.global.server>github</github.global.server>
         <maven.install.plugin.version>2.5.2</maven.install.plugin.version>
         <copy.rename.maven.plugin.version>1.0.1</copy.rename.maven.plugin.version>
+        <maven.plugin.plugin.version>3.6.0</maven.plugin.plugin.version>
+        <!--<jackson.version>2.9.8</jackson.version>-->
     </properties>
 
     <distributionManagement>
@@ -62,6 +64,13 @@
             <version>3.4</version>
             <scope>provided</scope>
         </dependency>
+        <!--
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>${jackson.version}</version>
+        </dependency>
+        -->
     </dependencies>
 
     <profiles>
@@ -185,7 +194,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-plugin-plugin</artifactId>
-                <version>3.3</version>
+                <version>${maven.plugin.plugin.version}</version>
                 <configuration>
                     <skipErrorNoDescriptorsFound>true</skipErrorNoDescriptorsFound>
                 </configuration>

@@ -7,46 +7,57 @@ import org.jetbrains.annotations.Nullable;
 import java.io.*;
 import java.nio.file.Path;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.stream.Collectors;
 
 public class LocalAnalyzer implements IAnalyzer {
+    @NotNull
     private final Set<Path> existingFiles;
-    private final Set<Checksum> oldChecksums;
-    private final Set<Checksum> newChecksums;
+    @NotNull
+    private final TreeSet<Checksum> oldChecksums;
+    @NotNull
+    private final TreeSet<Checksum> newChecksums;
+    @NotNull
+    private final Path sourceFolder;
 
-    public LocalAnalyzer(@NotNull Log log, @NotNull Path sourceFolder, @NotNull Path fileWithChecksums) throws IOException {
+    public LocalAnalyzer(@NotNull Log log, @NotNull Path sourceFolder, @Nullable byte[] oldChecksumBytes) throws IOException {
+        log.info("Searching for existing files at " + sourceFolder);
         existingFiles = Collections.unmodifiableSet(MyFileIterator.getAllFilesAndFoldersRecursively(sourceFolder).stream()
                 .filter(path -> !path.getFileName().toString().equals(".gitignore"))
                 .collect(Collectors.toSet())
         );
-        Set<Checksum> tempNewChecksums = new HashSet<>();
+        log.info("Calculating checksums for " + existingFiles.size() + " files");
+        TreeSet<Checksum> tempNewChecksums = new TreeSet<>();
         for (Path path : existingFiles) {
             tempNewChecksums.add(new Checksum(path, sourceFolder));
         }
-        newChecksums = Collections.unmodifiableSet(tempNewChecksums);
+        newChecksums = tempNewChecksums;
+        this.sourceFolder = sourceFolder;
 
-        if (fileWithChecksums.toFile().exists()) {
-            Set<Checksum> oldChecksums;
-            try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(fileWithChecksums.toFile()))) {
-                oldChecksums = Collections.unmodifiableSet((Set<Checksum>) ois.readObject());
+        if (oldChecksumBytes != null) {
+            log.info("Reading old checksums");
+            TreeSet<Checksum> oldChecksums;
+            try (ObjectInputStream ois = new ObjectInputStream(new ByteArrayInputStream(oldChecksumBytes))) {
+                oldChecksums = (TreeSet<Checksum>) ois.readObject();
             } catch (IOException | ClassNotFoundException e) {
-                log.warn("Unable to read contents of " + fileWithChecksums + " file, skipping", e);
-                oldChecksums = Collections.emptySet();
+                log.warn("Unable to read old checksums, skipping", e);
+                oldChecksums = new TreeSet<>();
             }
             this.oldChecksums = oldChecksums;
+
         } else {
-            oldChecksums = Collections.emptySet();
+            log.info("No old checksums found");
+            oldChecksums = new TreeSet<>();
         }
     }
 
     @Override
-    @Nullable
-    public Set<Path> getFilesToCopy() {
-        Set<Checksum> filesToCopy = new HashSet<>(newChecksums);
+    @NotNull
+    public TreeSet<Path> getFilesToCopy() {
+        TreeSet<Checksum> filesToCopy = new TreeSet<>(newChecksums);
         filesToCopy.removeAll(oldChecksums);
-        Set<Path> result = new HashSet<>();
+        TreeSet<Path> result = new TreeSet<>();
         for (Checksum checksum : filesToCopy) {
             result.add(checksum.getPath());
         }
@@ -54,17 +65,18 @@ public class LocalAnalyzer implements IAnalyzer {
     }
 
     @Override
-    @Nullable
-    public Set<Path> getFilesToRemove() {
-        Set<Path> filesToRemove = new HashSet<>();
+    @NotNull
+    public TreeSet<Path> getFilesToRemove() {
+        TreeSet<Path> filesToRemove = new TreeSet<>();
         for (Checksum checksum : oldChecksums) {
             filesToRemove.add(checksum.getPath());
         }
-        filesToRemove.removeAll(existingFiles);
+        for (Path existingPath : existingFiles) {
+            filesToRemove.remove(sourceFolder.toAbsolutePath().relativize(existingPath.toAbsolutePath()));
+        }
         return filesToRemove;
     }
 
-    @NotNull
     public void writeNewChecksums(@NotNull Path fileWithChecksums) throws IOException {
         fileWithChecksums.getParent().toFile().mkdirs();
         try (ObjectOutputStream ois = new ObjectOutputStream(new FileOutputStream(fileWithChecksums.toFile(), false))) {

@@ -8,10 +8,7 @@ import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
+import java.nio.file.*;
 import java.util.Set;
 
 @Mojo(name = "sync-folder")
@@ -33,7 +30,15 @@ public class FolderSynchronizer extends AbstractMojo {
         Path fileWithChecksums = Paths.get(checksumFile);
         LocalAnalyzer analyzer = null;
         try {
-            analyzer = new LocalAnalyzer(getLog(), sourceFolderPath, fileWithChecksums);
+            byte[] oldChecksumBytes = null;
+            try {
+                oldChecksumBytes = Files.readAllBytes(fileWithChecksums);
+            } catch (NoSuchFileException ignored) {
+            } catch (Throwable e) {
+                getLog().warn("Unable to read old checksum bytes from  " + fileWithChecksums, e);
+            }
+
+            analyzer = new LocalAnalyzer(getLog(), sourceFolderPath, oldChecksumBytes);
         } catch (IOException e) {
             throw new MojoExecutionException("Unable to initialize folder synchronization", e);
         }
@@ -45,13 +50,13 @@ public class FolderSynchronizer extends AbstractMojo {
             Path targetPath = destFolderPath.resolve(path).normalize();
             if (targetPath.toFile().exists()) {
                 try {
-                    getLog().debug("Deleting path " + path);
-                    Files.delete(path);
+                    getLog().debug("Deleting path " + targetPath);
+                    Files.delete(targetPath);
                 } catch (IOException e) {
-                    throw new MojoExecutionException("Unable to remove file / folder " + path, e);
+                    throw new MojoExecutionException("Unable to remove file / folder " + targetPath, e);
                 }
             } else {
-                getLog().debug("Path " + path + " is already deleted by third party");
+                getLog().debug("Path " + targetPath + " is already deleted by third party");
             }
         }
 
