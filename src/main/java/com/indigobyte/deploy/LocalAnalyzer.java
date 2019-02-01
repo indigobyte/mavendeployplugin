@@ -23,12 +23,12 @@ public class LocalAnalyzer implements IAnalyzer {
         );
         Set<Checksum> tempNewChecksums = new HashSet<>();
         for (Path path : existingFiles) {
-            tempNewChecksums.add(new Checksum(path));
+            tempNewChecksums.add(new Checksum(path, sourceFolder));
         }
         newChecksums = Collections.unmodifiableSet(tempNewChecksums);
 
         if (fileWithChecksums.toFile().exists()) {
-            Set<Checksum> oldChecksums = Collections.emptySet();
+            Set<Checksum> oldChecksums;
             try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(fileWithChecksums.toFile()))) {
                 oldChecksums = Collections.unmodifiableSet((Set<Checksum>) ois.readObject());
             } catch (IOException | ClassNotFoundException e) {

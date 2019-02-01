@@ -37,9 +37,13 @@ public class FolderSynchronizer extends AbstractMojo {
         } catch (IOException e) {
             throw new MojoExecutionException("Unable to initialize folder synchronization", e);
         }
+
+        Path destFolderPath = Paths.get(this.destFolder);
+
         Set<Path> filesToRemove = analyzer.getFilesToRemove();
         for (Path path : filesToRemove) {
-            if (path.toFile().exists()) {
+            Path targetPath = destFolderPath.resolve(path).normalize();
+            if (targetPath.toFile().exists()) {
                 try {
                     getLog().debug("Deleting path " + path);
                     Files.delete(path);
@@ -51,11 +55,9 @@ public class FolderSynchronizer extends AbstractMojo {
             }
         }
 
-        Path destFolderPath = Paths.get(this.destFolder);
         Set<Path> filesToCopy = analyzer.getFilesToCopy();
         for (Path path : filesToCopy) {
-            Path relativeFileName = sourceFolderPath.relativize(path).normalize();
-            Path targetPath = destFolderPath.resolve(relativeFileName).normalize();
+            Path targetPath = destFolderPath.resolve(path).normalize();
             if (path.toFile().isFile()) {
                 if (targetPath.toFile().isDirectory()) {
                     try {

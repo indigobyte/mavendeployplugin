@@ -13,8 +13,8 @@ public class Checksum implements Serializable {
     private final long lastModifiedDate;
     private final boolean folder;
 
-    public Checksum(@NotNull Path file) {
-        filePath = file.toAbsolutePath().normalize().toString();
+    public Checksum(@NotNull Path file, @NotNull Path baseFolder) {
+        filePath = baseFolder.normalize().toAbsolutePath().relativize(file.normalize().toAbsolutePath()).toString();
         File file1 = file.toFile();
         lastModifiedDate = file1.lastModified();
         folder = file1.isDirectory();
