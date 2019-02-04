@@ -7,7 +7,8 @@ Maven plugin for deployment of Tomcat web application
 ### How to create new version of plugin
 
 1. Checkout `mvn-repo` branch in separate folder.
-Change version in `pom.xml`.
+1. Change version in `pom.xml`.
+1. Change `serialVersionUID` in `com.indigobyte.deploy.Checksum` if you want checksums old versions of the plugin not to be ignored.
 1. Run `mvn clean deploy`. This will overwrite contents of `mvn-repo` branch on the server. You need to put old versions 
 back in the repo.
 1. Clone `mvn-repo` branch from the server in another folder.

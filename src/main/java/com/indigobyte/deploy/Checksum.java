@@ -12,6 +12,7 @@ import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class Checksum implements Serializable, Comparable<Checksum> {
+    private static final long serialVersionUID = 2L;
     @NotNull
     private final String filePath;
     private final boolean folder;
@@ -53,7 +54,7 @@ public class Checksum implements Serializable, Comparable<Checksum> {
 
     @NotNull
     public static String extractFilePath(@NotNull Path file, @NotNull Path baseFolder) {
-        return baseFolder.normalize().toAbsolutePath().relativize(file.normalize().toAbsolutePath()).toString();
+        return Utils.linuxPath(baseFolder.normalize().toAbsolutePath().relativize(file.normalize().toAbsolutePath()).toString());
     }
 
     @NotNull

@@ -37,8 +37,14 @@ public class Utils {
         zipFile.close();
     }
 
+    @NotNull
     public static String linuxPath(@NotNull Path path) {
-        return path.toString().replace('\\', '/');
+        return linuxPath(path.toString());
+    }
+
+    @NotNull
+    public static String linuxPath(@NotNull String path) {
+        return path.replace('\\', '/');
     }
 
     public static String linuxPathWithoutSlash(@NotNull Path path) {
