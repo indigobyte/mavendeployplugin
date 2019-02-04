@@ -99,9 +99,10 @@ public class Utils {
     public static String getDigest(@NotNull Path filePath) throws IOException {
         if (filePath.toFile().exists() && filePath.toFile().isFile()) {
             InputStream is = Files.newInputStream(filePath);
-            getDigest(is);
+            return getDigest(is);
+        } else {
+            return "It's a folder";
         }
-        return "";
     }
 
     @NotNull

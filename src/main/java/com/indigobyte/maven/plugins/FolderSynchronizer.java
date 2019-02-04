@@ -62,22 +62,23 @@ public class FolderSynchronizer extends AbstractMojo {
 
         Set<Path> filesToCopy = analyzer.getFilesToCopy();
         for (Path path : filesToCopy) {
+            Path sourcePath = sourceFolderPath.resolve(path).normalize();
             Path targetPath = destFolderPath.resolve(path).normalize();
-            if (path.toFile().isFile()) {
+            if (targetPath.toFile().isFile()) {
                 if (targetPath.toFile().isDirectory()) {
                     try {
-                        getLog().debug("Deleting path " + path);
+                        getLog().debug("Deleting path " + targetPath);
                         Files.delete(targetPath);
                     } catch (IOException e) {
-                        throw new MojoExecutionException("Unable to remove target folder " + path + " in order to replace it with file " + path, e);
+                        throw new MojoExecutionException("Unable to remove target folder " + targetPath + " in order to replace it with file " + sourcePath, e);
                     }
                 }
                 try {
                     targetPath.getParent().toFile().mkdirs();
-                    getLog().debug("Copying file " + path + " to " + targetPath);
-                    Files.copy(path, targetPath, StandardCopyOption.COPY_ATTRIBUTES, StandardCopyOption.REPLACE_EXISTING);
+                    getLog().debug("Copying file " + sourcePath + " to " + targetPath);
+                    Files.copy(sourcePath, targetPath, StandardCopyOption.COPY_ATTRIBUTES, StandardCopyOption.REPLACE_EXISTING);
                 } catch (IOException e) {
-                    throw new MojoExecutionException("Unable to copy file " + path + " to " + targetPath, e);
+                    throw new MojoExecutionException("Unable to copy file " + sourcePath + " to " + targetPath, e);
                 }
             } else {
                 getLog().debug("Creating folder " + path + " as " + targetPath);
