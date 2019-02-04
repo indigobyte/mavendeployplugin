@@ -9,25 +9,31 @@ import java.nio.file.Paths;
 import java.util.Comparator;
 import java.util.Objects;
 import java.util.TreeMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class Checksum implements Serializable, Comparable<Checksum> {
     @NotNull
     private final String filePath;
     private final boolean folder;
+    private final long lastModified;
     @Nullable
     private final String digest;
 //    @Nullable
 //    private final TreeMap<String, Long> jarFilesCrc32;
 
-    public Checksum(@NotNull Path file, @NotNull Path baseFolder) throws IOException {
-        filePath = baseFolder.normalize().toAbsolutePath().relativize(file.normalize().toAbsolutePath()).toString();
+    public Checksum(@NotNull Path file, @NotNull Path baseFolder, @Nullable Checksum oldChecksum, @NotNull AtomicInteger checksumsCalculated) throws IOException {
+        filePath = extractFilePath(file, baseFolder);
         File file1 = file.toFile();
         folder = file1.isDirectory();
+        lastModified = file1.lastModified();
         if (folder) {
             digest = null;
         } else {
-            if (!file.getName(file.getNameCount() - 1).toString().endsWith(".jar")) {
+            if (oldChecksum != null && !oldChecksum.folder && oldChecksum.lastModified == lastModified) {
+                digest = oldChecksum.digest;
+            } else if (!file.getName(file.getNameCount() - 1).toString().endsWith(".jar")) {
                 digest = Utils.getDigest(file);
+                checksumsCalculated.incrementAndGet();
                 //jarFilesCrc32 = null;
             } else {
                 TreeMap<String, Long> crc32 = Utils.getCrc32OfJarFile(file);
@@ -37,6 +43,7 @@ public class Checksum implements Serializable, Comparable<Checksum> {
                     }
                     try (ByteArrayInputStream bais = new ByteArrayInputStream(baos.toByteArray())) {
                         digest = Utils.getDigest(bais);
+                        checksumsCalculated.incrementAndGet();
                     }
                 }
 //                jarFilesCrc32 = null;
@@ -44,6 +51,10 @@ public class Checksum implements Serializable, Comparable<Checksum> {
         }
     }
 
+    @NotNull
+    public static String extractFilePath(@NotNull Path file, @NotNull Path baseFolder) {
+        return baseFolder.normalize().toAbsolutePath().relativize(file.normalize().toAbsolutePath()).toString();
+    }
 
     @NotNull
     public Path getPath() {

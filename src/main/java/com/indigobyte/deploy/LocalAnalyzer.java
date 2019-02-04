@@ -7,8 +7,11 @@ import org.jetbrains.annotations.Nullable;
 import java.io.*;
 import java.nio.file.Path;
 import java.util.Collections;
+import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 public class LocalAnalyzer implements IAnalyzer {
@@ -22,19 +25,6 @@ public class LocalAnalyzer implements IAnalyzer {
     private final Path sourceFolder;
 
     public LocalAnalyzer(@NotNull Log log, @NotNull Path sourceFolder, @Nullable byte[] oldChecksumBytes) throws IOException {
-        log.info("Searching for existing files at " + sourceFolder);
-        existingFiles = Collections.unmodifiableSet(MyFileIterator.getAllFilesAndFoldersRecursively(sourceFolder).stream()
-                .filter(path -> !path.getFileName().toString().equals(".gitignore"))
-                .collect(Collectors.toSet())
-        );
-        log.info("Calculating checksums for " + existingFiles.size() + " files");
-        TreeSet<Checksum> tempNewChecksums = new TreeSet<>();
-        for (Path path : existingFiles) {
-            tempNewChecksums.add(new Checksum(path, sourceFolder));
-        }
-        newChecksums = tempNewChecksums;
-        this.sourceFolder = sourceFolder;
-
         if (oldChecksumBytes != null) {
             log.info("Reading old checksums");
             TreeSet<Checksum> oldChecksums;
@@ -50,6 +40,27 @@ public class LocalAnalyzer implements IAnalyzer {
             log.info("No old checksums found");
             oldChecksums = new TreeSet<>();
         }
+
+        Map<String, Checksum> oldChecksumMap = oldChecksums.stream()
+                .collect(Collectors.toMap(
+                        Checksum::getFilePath,
+                        Function.identity()
+                ));
+
+        log.info("Searching for existing files at " + sourceFolder);
+        existingFiles = Collections.unmodifiableSet(MyFileIterator.getAllFilesAndFoldersRecursively(sourceFolder).stream()
+                .filter(path -> !path.getFileName().toString().equals(".gitignore"))
+                .collect(Collectors.toSet())
+        );
+        log.info("Calculating checksums for " + existingFiles.size() + " files");
+        TreeSet<Checksum> tempNewChecksums = new TreeSet<>();
+        AtomicInteger checksumsCalculated = new AtomicInteger();
+        for (Path path : existingFiles) {
+            tempNewChecksums.add(new Checksum(path, sourceFolder, oldChecksumMap.get(Checksum.extractFilePath(path, sourceFolder)), checksumsCalculated));
+        }
+        newChecksums = tempNewChecksums;
+        this.sourceFolder = sourceFolder;
+        log.info("Checksum calculation complete. Actual checksums calculated: " + checksumsCalculated.get() + ", old checksums used: " + (existingFiles.size() - checksumsCalculated.get()));
     }
 
     @Override
