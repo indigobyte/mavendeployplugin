@@ -12,7 +12,7 @@ import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class Checksum implements Serializable, Comparable<Checksum> {
-    private static final long serialVersionUID = 2L;
+    private static final long serialVersionUID = 3L;
     @NotNull
     private final String filePath;
     private final boolean folder;
