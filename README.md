@@ -74,6 +74,4 @@ specify `install` in the `Command line`.
 |deploy.sshKeyFile|SSH key file|yes|
 |deploy.remoteWebApps|remote folder where upload files to|yes|
 |deploy.nginxCacheDir|remote folder which must be cleaned after any changes were made|yes|
-|deploy.predeployScript|remote command to always run before deployment|yes, can be set to `:` to do nothing|
-|deploy.postdeployScript|remote command to always run after deployment|yes, can be set to `:` to do nothing|
 |touchWebXml|whether `WEB-INF/web.xml` must be touched after remote files were uploaded/removed/overwritten|no, default `true`|

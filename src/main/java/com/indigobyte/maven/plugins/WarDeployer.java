@@ -69,12 +69,6 @@ public class WarDeployer extends AbstractMojo {
     @Parameter(property = "deploy.nginxCacheDir", required = true)
     private String nginxCacheDir;
 
-    @Parameter(property = "deploy.predeployScript", required = true)
-    private String predeployScript;
-
-    @Parameter(property = "deploy.postdeployScript", required = true)
-    private String postdeployScript;
-
     @Parameter(defaultValue = "true")
     private boolean touchWebXml;
 
@@ -99,11 +93,6 @@ public class WarDeployer extends AbstractMojo {
             session.connect();
             SshFilesystem remoteFs = new SshFilesystem(world, "remoteFs", jSch);
             SshRoot root = new SshRoot(remoteFs, session);
-
-            //Execute pre-deploy script
-            getLog().info("Executing pre-deploy script " + predeployScript);
-            root.exec(predeployScript);
-            getLog().info("Pre-deploy script executed");
 
             getLog().info("Checking remote checksum file" + remoteAppChecksumFile);
             byte[] remoteChecksumFileBytes = null;
@@ -199,7 +188,6 @@ public class WarDeployer extends AbstractMojo {
             } else {
                 getLog().info("Nothing to do: local files are identical to the remote machine's ones");
             }
-            root.exec(postdeployScript);
         } catch (IOException | JSchException e) {
             getLog().error(e);
             e.printStackTrace();
