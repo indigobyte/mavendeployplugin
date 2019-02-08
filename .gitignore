@@ -3,5 +3,9 @@ target
 .idea/**/tasks.xml
 .idea/**/uiDesigner.xml
 .idea/deployment.xml
+.idea/modules.xml
+.idea/libraries/Maven__*.xml
+.idea/artifacts/*
+*.iml
 node_modules
 settings.xml

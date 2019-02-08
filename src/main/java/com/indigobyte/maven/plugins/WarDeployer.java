@@ -16,7 +16,7 @@ package com.indigobyte.maven.plugins;
  * limitations under the License.
  */
 
-import com.indigobyte.deploy.Analyzer;
+import com.indigobyte.deploy.LocalAnalyzer;
 import com.indigobyte.deploy.Utils;
 import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.JSchException;
@@ -24,9 +24,7 @@ import com.jcraft.jsch.Session;
 import net.oneandone.sushi.fs.Node;
 import net.oneandone.sushi.fs.Settings;
 import net.oneandone.sushi.fs.World;
-import net.oneandone.sushi.fs.file.FileFilesystem;
 import net.oneandone.sushi.fs.file.FileNode;
-import net.oneandone.sushi.fs.memory.MemoryFilesystem;
 import net.oneandone.sushi.fs.ssh.SshFilesystem;
 import net.oneandone.sushi.fs.ssh.SshNode;
 import net.oneandone.sushi.fs.ssh.SshRoot;
@@ -38,16 +36,12 @@ import org.apache.maven.plugin.MojoFailureException;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 
-import java.io.File;
-import java.io.FileWriter;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.security.NoSuchAlgorithmException;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.List;
 import java.util.Properties;
+import java.util.Set;
 
 @Mojo(name = "deploy-war")
 public class WarDeployer extends AbstractMojo {
@@ -56,6 +50,9 @@ public class WarDeployer extends AbstractMojo {
 
     @Parameter(property = "deploy.hostName", required = true)
     private String hostName;
+
+    @Parameter(property = "deploy.port", required = false, defaultValue = "22")
+    private int port;
 
     @Parameter(property = "deploy.userName", required = true)
     private String userName;
@@ -72,11 +69,15 @@ public class WarDeployer extends AbstractMojo {
     @Parameter(property = "deploy.nginxCacheDir", required = true)
     private String nginxCacheDir;
 
+    @Parameter(defaultValue = "true")
+    private boolean touchWebXml;
+
     public void execute() throws MojoExecutionException, MojoFailureException {
         getLog().info("WarDeployer mojo has started");
 
-        try (World world = new World(OS.CURRENT, new Settings("UTF-8", "\n"), new Buffer(), (FileFilesystem) null, (MemoryFilesystem) null, new String[]{"**/.svn", "**/.svn/**/*"})) {
+        try (World world = new World(OS.CURRENT, new Settings("UTF-8", "\n"), new Buffer(), null, null, "**/.svn", "**/.svn/**/*")) {
             Path remoteAppRoot = Paths.get(remoteWebApps, warName);
+            Path remoteAppChecksumFile = Paths.get(remoteWebApps, warName + ".checksums");
             Path localAppRoot = Paths.get(projectBuildDir, warName);
             Path nginxCache = Paths.get(nginxCacheDir);
 
@@ -84,14 +85,23 @@ public class WarDeployer extends AbstractMojo {
             world.loadNetRcOpt();
             JSch jSch = new JSch();
             jSch.addIdentity(sshKeyFile);
-            Session session = jSch.getSession(userName, hostName);
+            Session session = jSch.getSession(userName, hostName, port);
             Properties config = new Properties();
             config.put("StrictHostKeyChecking", "no");
             session.setConfig(config);
+            getLog().info("Connecting to " + hostName + ":" + port);
             session.connect();
             SshFilesystem remoteFs = new SshFilesystem(world, "remoteFs", jSch);
             SshRoot root = new SshRoot(remoteFs, session);
-            List<String> digestLines = Collections.emptyList();
+
+            getLog().info("Checking remote checksum file" + remoteAppChecksumFile);
+            byte[] remoteChecksumFileBytes = null;
+            SshNode remoteAppChecksumFileNode = root.node(Utils.linuxPathWithoutSlash(remoteAppChecksumFile), null);
+            if (remoteAppChecksumFileNode.exists() && !remoteAppChecksumFileNode.isFile()) {
+                getLog().error(Utils.linuxPath(remoteAppChecksumFile) + " is not a file!");
+                throw new MojoFailureException(Utils.linuxPath(remoteAppChecksumFile) + " is not a file!");
+            }
+
             //Create remote app root directory
             SshNode remoteAppRootNode = root.node(Utils.linuxPathWithoutSlash(remoteAppRoot), null);
             if (!remoteAppRootNode.exists()) {
@@ -102,18 +112,22 @@ public class WarDeployer extends AbstractMojo {
                     getLog().error(Utils.linuxPath(remoteAppRoot) + " is not a directory!");
                     throw new MojoFailureException(Utils.linuxPath(remoteAppRoot) + " is not a directory!");
                 }
-                if (!remoteAppRootNode.list().isEmpty()) {
-                    digestLines = Arrays.asList(root.exec("cd " + Utils.linuxPath(remoteAppRoot) + ";find . -type f -print0 | xargs -0 md5sum").split("\r+\n"));
-                } else {
-                    getLog().info(Utils.linuxPath(remoteAppRoot) + " is empty");
+
+                if (remoteAppChecksumFileNode.exists()) {
+                    getLog().info("Downloading remote checksum file" + remoteAppChecksumFile);
+                    ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                    remoteAppChecksumFileNode.copyFileTo(bos);
+                    remoteChecksumFileBytes = bos.toByteArray();
+                    getLog().info("Remote checksum file downloaded");
                 }
             }
-            Analyzer analyzer = new Analyzer(localAppRoot, digestLines);
+            LocalAnalyzer analyzer = new LocalAnalyzer(getLog(), localAppRoot, remoteChecksumFileBytes);
 
-            List<Path> filesToCopy = analyzer.getFilesToCopy();
-            List<Path> filesToRemove = analyzer.getFilesToRemove();
-            if (filesToCopy != null) {
-                getLog().info(filesToCopy.size() + " changed file(s) were found");
+            Set<Path> filesToCopy = analyzer.getFilesToCopy();
+            Set<Path> filesToRemove = analyzer.getFilesToRemove();
+            if (!filesToCopy.isEmpty()) {
+                Utils.logFiles(getLog(), filesToCopy, "Changed files were found", Path::toString);
+
                 FileNode tempFile = world.getTemp().createTempFile();
                 getLog().info("Archive containing changed and new files will be created in temporary file " + tempFile.getName());
                 Utils.createAchive(filesToCopy, localAppRoot, tempFile.getAbsolute());
@@ -127,8 +141,9 @@ public class WarDeployer extends AbstractMojo {
                 tempFile.deleteFile();
                 getLog().info("Changed file(s) were uploaded to the remote machine");
             }
-            if (filesToRemove != null) {
-                getLog().info(filesToRemove.size() + " file(s) must be deleted from the remote machine");
+            if (!filesToRemove.isEmpty()) {
+                Utils.logFiles(getLog(), filesToRemove, "files must be deleted from the remote machine", Path::toString);
+
                 for (Path curFile : filesToRemove) {
                     Path pathOfFileToDelete = remoteAppRoot.resolve(curFile);
                     String nameOfFileToDelete = Utils.linuxPathWithoutSlash(pathOfFileToDelete);
@@ -137,9 +152,28 @@ public class WarDeployer extends AbstractMojo {
                 }
                 getLog().info("Old file(s) were deleted from the remote machine");
             }
-            if (filesToCopy != null || filesToRemove != null) {
-                getLog().info("web.xml was touched");
-                root.exec("touch " + Utils.linuxPath(remoteAppRoot) + "/WEB-INF/web.xml");
+            if (!filesToCopy.isEmpty() || !filesToRemove.isEmpty()) {
+                //Write new checksums
+                {
+                    FileNode tempFile = world.getTemp().createTempFile();
+                    analyzer.writeNewChecksums(Paths.get(tempFile.getAbsolute()));
+
+                    getLog().info("Deleting old remote checksum file " + remoteAppChecksumFileNode.getPath());
+                    if (remoteAppChecksumFileNode.exists()) {
+                        remoteAppChecksumFileNode.deleteFile();
+                    }
+                    getLog().info("Copying local file " + tempFile.getAbsolute() + " to " + remoteAppChecksumFileNode.getPath());
+                    tempFile.copyFile(remoteAppChecksumFileNode);
+                    getLog().info("Removing temporary local checksum file " + tempFile.getAbsolute());
+                    tempFile.deleteFile();
+                    getLog().info("New checksum file was uploaded to the remote machine");
+                }
+                if (touchWebXml) {
+                    root.exec("touch " + Utils.linuxPath(remoteAppRoot) + "/WEB-INF/web.xml");
+                    getLog().info("web.xml was touched");
+                } else {
+                    getLog().info("web.xml was not touched because touchWebXml is " + touchWebXml);
+                }
                 SshNode nginxCacheNode = root.node(Utils.linuxPathWithoutSlash(nginxCache), null);
                 if (!nginxCacheNode.exists()) {
                     getLog().info("Nginx cache dir " + Utils.linuxPath(nginxCache) + " doesn't exist");
@@ -154,7 +188,7 @@ public class WarDeployer extends AbstractMojo {
             } else {
                 getLog().info("Nothing to do: local files are identical to the remote machine's ones");
             }
-        } catch (IOException | NoSuchAlgorithmException | JSchException e) {
+        } catch (IOException | JSchException e) {
             getLog().error(e);
             e.printStackTrace();
             throw new MojoExecutionException("Error during execution of the deploy script", e);
