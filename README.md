@@ -2,53 +2,7 @@
 
 Maven plugin for deployment of Tomcat web application
 
-## Introduction
-
-### How to create new version of plugin
-
-1. Checkout `mvn-repo` branch in separate folder.
-1. Change version in `pom.xml`.
-1. Change `serialVersionUID` in `com.indigobyte.deploy.Checksum` if you want checksums old versions of the plugin not to be ignored.
-1. Run `mvn clean deploy`. This will overwrite contents of `mvn-repo` branch on the server. You need to put old versions 
-back in the repo.
-1. Clone `mvn-repo` branch from the server in another folder.
-1. Merge contents of `mvn-repo` branch created on step 1 with the one created during previous step:
-    1. You need to change `/com/indigobyte/maven/plugins/cc-deploy-maven-plugin/maven-metadata.xml` and add all the 
-    previous versions in the `versions` tag:
-     ```
-    <versions>
-      <version>1.4</version>
-      <version>1.5</version>
-      <version>1.6</version>
-    </versions>
-    ```
-    1. After that calculate checksums of the changed `maven-metadata.xml` file and update `maven-metadata.xml.md5` and 
-    `maven-metadata.xml.sha1` files. You can use http://onlinemd5.com/ for checksum generation, just don't forget to 
-    change letters to lowercase.
-    1. Copy folders with previous versions from the folder created on step 1.
-    1. Commit and push updated version to the server. 
-
-### How to create new version of plugin (old / doesn't work)
-
-Maven repository is located in folder repository. To produce new version, change version in pom.xml, build plugin
-JAR file, then create Maven Debug/Run configuration in IDEA and enter this in the `Command line` field:
-
-    install:install-file
-    -DgroupId=com.indigobyte.maven.plugins
-    -DartifactId=cc-deploy-maven-plugin
-    -Dversion=1.0-SNAPSHOT
-    -Dfile=c:\path\to\project\folder\mavendeployplugin\target\cc-deploy-maven-plugin-1.0-SNAPSHOT.jar
-    -Dpackaging=jar
-    -DgeneratePom=true
-    -DlocalRepositoryPath=c:\path\to\project\folder\mavendeployplugin\repository\
-    -DcreateChecksum=true
-
-Where `cc-deploy-maven-plugin-1.0-SNAPSHOT.jar` is the name of the jar file with new release.
-
-To test how plugin works without sending changes to server, create Maven Debug/Run configuration in IDEA and
-specify `install` in the `Command line`.
-
-### How to create new version of plugin
+## How to create new version of plugin
 
 1. Let's say git repository is cloned into local folder `C:\cc-deploy-maven-plugin`.
 1. Clone repository to separate folder, e.g. `C:\mvn-repo`.
@@ -59,11 +13,11 @@ specify `install` in the `Command line`.
 1. Go to folder `C:\mvn-repo`.
 1. Add new files to commit, then commit and push `mvn-repo` branch to server. 
 
-### Maven: how to build and install locally, without uploading to remote repository
+## Maven: how to build and install locally, without uploading to remote repository
 
     mvn clean install
     
-### Plugin configuration
+## Plugin configuration
 
 |parameter|description|required|
 |---|---|---|

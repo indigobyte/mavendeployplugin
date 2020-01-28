@@ -79,7 +79,6 @@ public class WarDeployer extends AbstractMojo {
             Path remoteAppRoot = Paths.get(remoteWebApps, warName);
             Path remoteAppChecksumFile = Paths.get(remoteWebApps, warName + ".checksums");
             Path localAppRoot = Paths.get(projectBuildDir, warName);
-            Path nginxCache = Paths.get(nginxCacheDir);
 
             world.withStandardFilesystems(false);
             world.loadNetRcOpt();
@@ -174,16 +173,21 @@ public class WarDeployer extends AbstractMojo {
                 } else {
                     getLog().info("web.xml was not touched because touchWebXml is " + touchWebXml);
                 }
-                SshNode nginxCacheNode = root.node(Utils.linuxPathWithoutSlash(nginxCache), null);
-                if (!nginxCacheNode.exists()) {
-                    getLog().info("Nginx cache dir " + Utils.linuxPath(nginxCache) + " doesn't exist");
-                } else if (nginxCacheNode.list().isEmpty()) {
-                    getLog().info("Nginx cache dir " + Utils.linuxPath(nginxCache) + " is empty");
+                if (nginxCacheDir != null && !nginxCacheDir.isEmpty()) {
+                    Path nginxCache = Paths.get(nginxCacheDir);
+                    SshNode nginxCacheNode = root.node(Utils.linuxPathWithoutSlash(nginxCache), null);
+                    if (!nginxCacheNode.exists()) {
+                        getLog().info("Nginx cache dir " + Utils.linuxPath(nginxCache) + " doesn't exist");
+                    } else if (nginxCacheNode.list().isEmpty()) {
+                        getLog().info("Nginx cache dir " + Utils.linuxPath(nginxCache) + " is empty");
+                    } else {
+                        String purgeCommand = "sudo /usr/bin/find " + Utils.linuxPath(nginxCache) + " -mindepth 1 -delete";
+                        getLog().info("Purging nginx cache dir with command " + purgeCommand);
+                        root.exec(purgeCommand);
+                        getLog().info("Done");
+                    }
                 } else {
-                    String purgeCommand = "sudo /usr/bin/find " + Utils.linuxPath(nginxCache) + " -mindepth 1 -delete";
-                    getLog().info("Purging nginx cache dir with command " + purgeCommand);
-                    root.exec(purgeCommand);
-                    getLog().info("Done");
+                    getLog().info("No Nginx cache dir specified: " + nginxCacheDir + " is empty");
                 }
             } else {
                 getLog().info("Nothing to do: local files are identical to the remote machine's ones");
