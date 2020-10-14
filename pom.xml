@@ -5,7 +5,7 @@
     <groupId>com.indigobyte.maven.plugins</groupId>
     <artifactId>cc-deploy-maven-plugin</artifactId>
     <packaging>maven-plugin</packaging>
-    <version>1.11</version>
+    <version>1.12</version>
 
     <name>Deploy plugin Maven Mojo</name>
     <url>https://github.com/indigobyte/mavendeployplugin</url>
@@ -59,6 +59,11 @@
             <artifactId>maven-plugin-annotations</artifactId>
             <version>3.4</version>
             <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>net.i2p.crypto</groupId>
+            <artifactId>eddsa</artifactId>
+            <version>0.3.0</version>
         </dependency>
         <!--
         <dependency>
