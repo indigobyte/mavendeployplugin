@@ -24,7 +24,8 @@ import org.apache.maven.plugin.MojoFailureException;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.sshd.client.SshClient;
-import org.apache.sshd.client.keyverifier.AcceptAllServerKeyVerifier;
+import org.apache.sshd.client.auth.pubkey.UserAuthPublicKeyFactory;
+import org.apache.sshd.client.config.hosts.HostConfigEntry;
 import org.apache.sshd.client.session.ClientSession;
 import org.apache.sshd.client.subsystem.sftp.SftpClient;
 import org.apache.sshd.client.subsystem.sftp.impl.DefaultSftpClientFactory;
@@ -37,6 +38,7 @@ import org.jetbrains.annotations.NotNull;
 import java.io.*;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Collections;
 import java.util.Set;
 import java.util.function.Predicate;
 
@@ -132,8 +134,14 @@ public class WarDeployer extends AbstractMojo {
     public void execute() throws MojoExecutionException, MojoFailureException {
         getLog().info("WarDeployer mojo has started");
         SshClient sshClient = SshClient.setUpDefaultClient();
+        sshClient.setHostConfigEntryResolver((host, port, localAddress, username, context) -> new HostConfigEntry(
+                host,
+                host,
+                port,
+                username
+        ));
         sshClient.setKeyIdentityProvider(new FileKeyPairProvider(Paths.get(sshKeyFile)));
-        sshClient.setServerKeyVerifier(AcceptAllServerKeyVerifier.INSTANCE);
+        sshClient.setUserAuthFactories(Collections.singletonList(UserAuthPublicKeyFactory.INSTANCE));
         sshClient.start();
         getLog().info("Connecting to " + hostName + ":" + port);
         try (ClientSession session = sshClient.connect(userName, hostName, port)
@@ -195,6 +203,7 @@ public class WarDeployer extends AbstractMojo {
                     copyLocalToRemote(sftpClient, tempFile, remoteTempArchive);
                     getLog().info("Unpacking remote archive");
                     String jarOutput = session.executeRemoteCommand("cd " + Utils.linuxPath(remoteAppRoot) + ";jar xvf /tmp/" + tempFile.getName());
+                    getLog().debug("jar extraction output: " + jarOutput);
                     getLog().info("Temp archive was unpacked. Removing temporary files");
                     sftpClient.remove(remoteTempArchive);
                     tempFile.delete();
