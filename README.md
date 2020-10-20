@@ -9,7 +9,7 @@ Maven plugin for deployment of Tomcat web application
 1. Switch to `mvn-repo` branch in that folder.
 1. Go back to folder `C:\cc-deploy-maven-plugin`
 1. Change version in `pom.xml`.
-1. Run `mvn clean install -DmvnRepo=C:\mvn-repo`. (when running on Cygwin, `\`, must be escaped: `mvn clean install -DmvnRepo=C:\\mvn-repo`)
+1. Run `mvn clean install -DmvnRepo=C:\mvn-repo`. (when running on Cygwin, \\ must be escaped: `mvn clean install -DmvnRepo=C:\\mvn-repo`)
 1. Go to folder `C:\mvn-repo`.
 1. Add new files to commit, then commit and push `mvn-repo` branch to server. 
 

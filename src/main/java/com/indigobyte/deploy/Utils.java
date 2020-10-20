@@ -47,14 +47,6 @@ public class Utils {
         return path.replace('\\', '/');
     }
 
-    public static String linuxPathWithoutSlash(@NotNull Path path) {
-        String result = linuxPath(path);
-        if (result.startsWith("/")) {
-            return result.substring(1);
-        }
-        return result;
-    }
-
     public static String getHex(byte[] bytes) {
         StringBuilder result = new StringBuilder();
 
