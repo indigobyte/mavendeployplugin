@@ -16,35 +16,31 @@ package com.indigobyte.maven.plugins;
  * limitations under the License.
  */
 
-import com.indigobyte.deploy.Analyzer;
+import com.indigobyte.deploy.LocalAnalyzer;
 import com.indigobyte.deploy.Utils;
-import com.jcraft.jsch.JSch;
-import com.jcraft.jsch.JSchException;
-import com.jcraft.jsch.Session;
-import net.oneandone.sushi.fs.Node;
-import net.oneandone.sushi.fs.Settings;
-import net.oneandone.sushi.fs.World;
-import net.oneandone.sushi.fs.file.FileFilesystem;
-import net.oneandone.sushi.fs.file.FileNode;
-import net.oneandone.sushi.fs.memory.MemoryFilesystem;
-import net.oneandone.sushi.fs.ssh.SshFilesystem;
-import net.oneandone.sushi.fs.ssh.SshNode;
-import net.oneandone.sushi.fs.ssh.SshRoot;
-import net.oneandone.sushi.io.Buffer;
-import net.oneandone.sushi.io.OS;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
+import org.apache.sshd.client.SshClient;
+import org.apache.sshd.client.auth.pubkey.UserAuthPublicKeyFactory;
+import org.apache.sshd.client.config.hosts.HostConfigEntry;
+import org.apache.sshd.client.session.ClientSession;
+import org.apache.sshd.client.subsystem.sftp.SftpClient;
+import org.apache.sshd.client.subsystem.sftp.impl.DefaultSftpClientFactory;
+import org.apache.sshd.common.keyprovider.FileKeyPairProvider;
+import org.apache.sshd.common.subsystem.sftp.SftpConstants;
+import org.apache.sshd.common.subsystem.sftp.SftpException;
+import org.apache.sshd.common.util.io.IoUtils;
+import org.jetbrains.annotations.NotNull;
 
-import java.io.File;
-import java.io.FileWriter;
-import java.io.IOException;
+import java.io.*;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.security.NoSuchAlgorithmException;
-import java.util.*;
+import java.util.Collections;
+import java.util.Set;
+import java.util.function.Predicate;
 
 @Mojo(name = "deploy-war")
 public class WarDeployer extends AbstractMojo {
@@ -72,156 +68,210 @@ public class WarDeployer extends AbstractMojo {
     @Parameter(property = "deploy.nginxCacheDir", required = true)
     private String nginxCacheDir;
 
-    @Parameter(property = "deploy.predeployScript", required = true)
-    private String predeployScript;
-
-    @Parameter(property = "deploy.postdeployScript", required = true)
-    private String postdeployScript;
-
     @Parameter(defaultValue = "true")
     private boolean touchWebXml;
 
+    private boolean folderExists(
+            @NotNull SftpClient sftpClient,
+            @NotNull String remoteDest
+    ) throws IOException {
+        return checkExistenceOfRemotePath(sftpClient, remoteDest, SftpClient.Attributes::isDirectory);
+    }
+
+    private boolean regularFileExists(
+            @NotNull SftpClient sftpClient,
+            @NotNull String remoteDest
+    ) throws IOException {
+        return checkExistenceOfRemotePath(sftpClient, remoteDest, SftpClient.Attributes::isRegularFile);
+    }
+
+    private boolean symbolicLinkExists(
+            @NotNull SftpClient sftpClient,
+            @NotNull String remoteDest
+    ) throws IOException {
+        return checkExistenceOfRemotePath(sftpClient, remoteDest, SftpClient.Attributes::isSymbolicLink);
+    }
+
+    private boolean checkExistenceOfRemotePath(
+            @NotNull SftpClient sftpClient,
+            @NotNull String remoteDest,
+            Predicate<SftpClient.Attributes> pathTypeValidator
+    ) throws IOException {
+        try {
+            SftpClient.Attributes stat = sftpClient.lstat(remoteDest);
+            if (stat == null) {
+                return false;
+            }
+            return pathTypeValidator.test(stat);
+        } catch (SftpException e) {
+            if (e.getStatus() != SftpConstants.SSH_FX_NO_SUCH_FILE) {
+                getLog().error("Error finding file " + remoteDest, e);
+                throw e;
+            }
+            return false;
+        }
+    }
+
+    private void copyLocalToRemote(
+            @NotNull SftpClient sftpClient,
+            @NotNull File localFile,
+            @NotNull String fullRemoteFileName
+    ) throws IOException {
+        getLog().info("Copying local file " + localFile.getAbsolutePath() + " to " + fullRemoteFileName);
+        try (OutputStream remoteOutputStream = sftpClient.write(
+                fullRemoteFileName,
+                SftpClient.OpenMode.Write,
+                SftpClient.OpenMode.Create,
+                SftpClient.OpenMode.Truncate
+        )) {
+            try (FileInputStream localArchiveInputStream = new FileInputStream(localFile)) {
+                IoUtils.copy(localArchiveInputStream, remoteOutputStream);
+            }
+        }
+    }
+
+
     public void execute() throws MojoExecutionException, MojoFailureException {
         getLog().info("WarDeployer mojo has started");
+        SshClient sshClient = SshClient.setUpDefaultClient();
+        sshClient.setHostConfigEntryResolver((host, port, localAddress, username, context) -> new HostConfigEntry(
+                host,
+                host,
+                port,
+                username
+        ));
+        sshClient.setKeyIdentityProvider(new FileKeyPairProvider(Paths.get(sshKeyFile)));
+        sshClient.setUserAuthFactories(Collections.singletonList(UserAuthPublicKeyFactory.INSTANCE));
+        sshClient.start();
+        getLog().info("Connecting to " + hostName + ":" + port);
+        try (ClientSession session = sshClient.connect(userName, hostName, port)
+                .verify(15000)
+                .getSession()
+        ) {
+            getLog().info("Authorization in progress");
+            session.auth().verify(15000);
 
-        try (World world = new World(OS.CURRENT, new Settings("UTF-8", "\n"), new Buffer(), (FileFilesystem) null, (MemoryFilesystem) null, new String[]{"**/.svn", "**/.svn/**/*"})) {
             Path remoteAppRoot = Paths.get(remoteWebApps, warName);
+            Path remoteAppChecksumFile = Paths.get(remoteWebApps, warName + ".checksums");
             Path localAppRoot = Paths.get(projectBuildDir, warName);
-            Path nginxCache = Paths.get(nginxCacheDir);
 
-            world.withStandardFilesystems(false);
-            world.loadNetRcOpt();
-            JSch jSch = new JSch();
-            jSch.addIdentity(sshKeyFile);
-            Session session = jSch.getSession(userName, hostName, port);
-            Properties config = new Properties();
-            config.put("StrictHostKeyChecking", "no");
-            session.setConfig(config);
-            session.connect();
-            SshFilesystem remoteFs = new SshFilesystem(world, "remoteFs", jSch);
-            SshRoot root = new SshRoot(remoteFs, session);
+            try (SftpClient sftpClient = DefaultSftpClientFactory.INSTANCE.createSftpClient(session)) {
+                getLog().info("Checking remote checksum file" + remoteAppChecksumFile);
+                byte[] remoteChecksumFileBytes = null;
 
-            //Execute pre-deploy script
-            root.exec(predeployScript);
-
-            List<String> digestLines = Collections.emptyList();
-            Map<String, Map<String, Long>> crc32 = new HashMap<>();
-            //Create remote app root directory
-            SshNode remoteAppRootNode = root.node(Utils.linuxPathWithoutSlash(remoteAppRoot), null);
-            if (!remoteAppRootNode.exists()) {
-                getLog().info("Creating remote directory for application at " + Utils.linuxPath(remoteAppRoot));
-                remoteAppRootNode.mkdir();
-            } else {
-                if (!remoteAppRootNode.isDirectory()) {
-                    getLog().error(Utils.linuxPath(remoteAppRoot) + " is not a directory!");
-                    throw new MojoFailureException(Utils.linuxPath(remoteAppRoot) + " is not a directory!");
+                String remoteAppChecksumFileNode = Utils.linuxPath(remoteAppChecksumFile);
+                if (folderExists(sftpClient, remoteAppChecksumFileNode) ||
+                        symbolicLinkExists(sftpClient, remoteAppChecksumFileNode)
+                ) {
+                    getLog().error(remoteAppChecksumFileNode + " is not a file!");
+                    throw new MojoFailureException(remoteAppChecksumFileNode + " is not a file!");
                 }
-                String countFilesCommand = "find " + Utils.linuxPath(remoteAppRoot) + " -type f | wc -l";
-                getLog().info("Counting files (recursively) in remote folder " + Utils.linuxPath(remoteAppRoot) + " using command " + countFilesCommand);
-                String fileCountStr = root.exec(countFilesCommand).trim();
-                getLog().info("Files found: " + fileCountStr);
-                int fileCount = Integer.parseInt(fileCountStr);
-                if (fileCount > 0) {
-                    getLog().info("Retrieving checksums from non-empty remote directory: " + Utils.linuxPath(remoteAppRoot));
-                    String generateChecksumsCommand = "cd " + Utils.linuxPath(remoteAppRoot) + ";find . -type f -not -name \"*.jar\" -print0 | xargs -0 md5sum";
-                    getLog().info("Generating checksums with command:\n" + generateChecksumsCommand);
-                    String checksumString = root.exec(generateChecksumsCommand);
-                    getLog().debug("Checksum string:\n" + checksumString);
-                    digestLines = Arrays.asList(checksumString.split("\r+\n"));
-                    getLog().info("Received " + digestLines.size() + " checkums");
-                    getLog().info("Retrieving CRCs of remote JARs");
-                    String allCrc = root.exec("cd " + Utils.linuxPath(remoteAppRoot) + ";find . -type f -name \"*.jar\" -exec unzip -vl '{}' \\;");
-                    getLog().info("Retrieved CRCs of remote JARs");
-                    for (String archiveCrc: allCrc.split("Archive:")) {
-                        archiveCrc = archiveCrc.trim();
-                        if (archiveCrc.isEmpty())
-                            continue; //Skip first empty line
-                        String[] archiveLines = archiveCrc.split("\r+\n");
-                        String archiveFileName = archiveLines[0];
-                        getLog().debug("Analyzing CRCs of archive \"" + archiveFileName + "\"");
-                        SortedMap<String, Long> curArchiveCrcMap = new TreeMap<>();
-                        //archiveLines have this format:
-                        /*
-                        ./sshwebproxy/WEB-INF/lib/commons-fileupload.jar                      -- line 0
-                         Length   Method    Size  Cmpr    Date    Time   CRC-32   Name        -- line 1
-                        --------  ------  ------- ---- ---------- ----- --------  ----        -- line 2
-                               0  Stored        0   0% 06-25-2003 23:12 00000000  META-INF/   -- line 3
-                                             ...
-                        --------          -------  ---                            -------     -- line N-1
-                           36295            18057  50%                            24 files    -- line N
-                         which means that the file data starts at line 3 and ends at line N-1
-                         */
-                        int startLine = 2;
-                        for (;startLine < archiveLines.length && !archiveLines[startLine].startsWith("--------"); ++startLine);
-                        for (int lineNo = startLine + 1; !archiveLines[lineNo].startsWith("--------"); ++lineNo) {
-                            String[] fileInfo = archiveLines[lineNo].trim().split("\\s+");
-                            String curFileName = fileInfo[7].trim();
-                            String curFileCrc = fileInfo[6].trim();
 
-                            if (curFileName.endsWith("/")) //It's a directory - skip it. We don't care about directories inside archives
-                                continue;
-                            curArchiveCrcMap.put(curFileName, Long.parseLong(curFileCrc, 16));
+                //Create remote app root directory
+                String remoteAppRootNode = Utils.linuxPath(remoteAppRoot);
+                if (regularFileExists(sftpClient, remoteAppRootNode) ||
+                        symbolicLinkExists(sftpClient, remoteAppRootNode)
+                ) {
+                    getLog().error(remoteAppRootNode + " is not a directory!");
+                    throw new MojoFailureException(remoteAppRootNode + " is not a directory!");
+                } else {
+                    if (!folderExists(sftpClient, remoteAppRootNode)) {
+                        getLog().info("Creating remote directory for application at " + Utils.linuxPath(remoteAppRoot));
+                        sftpClient.mkdir(remoteAppRootNode);
+                    } else {
+                        if (regularFileExists(sftpClient, remoteAppChecksumFileNode)) {
+                            getLog().info("Downloading remote checksum file" + remoteAppChecksumFile);
+                            try (InputStream remoteAppChecksumFileInputStream = sftpClient.read(remoteAppChecksumFileNode)) {
+                                remoteChecksumFileBytes = IoUtils.toByteArray(remoteAppChecksumFileInputStream);
+                                getLog().info("Remote checksum file downloaded");
+                            }
                         }
-                        crc32.put(archiveFileName, curArchiveCrcMap);
+                    }
+                }
+
+                LocalAnalyzer analyzer = new LocalAnalyzer(getLog(), localAppRoot, remoteChecksumFileBytes);
+
+                Set<Path> filesToCopy = analyzer.getFilesToCopy();
+                Set<Path> filesToRemove = analyzer.getFilesToRemove();
+                if (!filesToCopy.isEmpty()) {
+                    Utils.logFiles(getLog(), filesToCopy, "Changed files were found", Path::toString);
+                    File tempFile = File.createTempFile("war-deployer", ".tmp");
+//                    FileNode tempFile = world.getTemp().createTempFile();
+                    getLog().info("Archive containing changed and new files will be created in temporary file " + tempFile);
+                    Utils.createAchive(filesToCopy, localAppRoot, tempFile.getAbsolutePath());
+                    String remoteTempArchive = "/tmp/" + tempFile.getName();
+                    copyLocalToRemote(sftpClient, tempFile, remoteTempArchive);
+                    getLog().info("Unpacking remote archive");
+                    String jarOutput = session.executeRemoteCommand("cd " + Utils.linuxPath(remoteAppRoot) + ";jar xvf /tmp/" + tempFile.getName());
+                    getLog().debug("jar extraction output: " + jarOutput);
+                    getLog().info("Temp archive was unpacked. Removing temporary files");
+                    sftpClient.remove(remoteTempArchive);
+                    tempFile.delete();
+                    getLog().info("Changed file(s) were uploaded to the remote machine");
+                }
+                if (!filesToRemove.isEmpty()) {
+                    Utils.logFiles(getLog(), filesToRemove, "files must be deleted from the remote machine", Path::toString);
+
+                    for (Path curFile : filesToRemove) {
+                        Path pathOfFileToDelete = remoteAppRoot.resolve(curFile);
+                        String nameOfFileToDelete = Utils.linuxPath(pathOfFileToDelete);
+                        getLog().info("Removing " + pathOfFileToDelete);
+                        sftpClient.remove(nameOfFileToDelete);
+                    }
+                    getLog().info("Old file(s) were deleted from the remote machine");
+                }
+                if (!filesToCopy.isEmpty() || !filesToRemove.isEmpty()) {
+                    //Write new checksums
+                    {
+                        File tempFile = File.createTempFile("war-deployer-checksum", "tmp");
+                        analyzer.writeNewChecksums(tempFile.toPath());
+
+                        getLog().info("Deleting old remote checksum file " + remoteAppChecksumFileNode);
+                        if (regularFileExists(sftpClient, remoteAppChecksumFileNode)) {
+                            sftpClient.remove(remoteAppChecksumFileNode);
+                        }
+                        getLog().info("Copying local file " + tempFile.getAbsolutePath() + " to " + remoteAppChecksumFileNode);
+                        copyLocalToRemote(sftpClient, tempFile, remoteAppChecksumFileNode);
+                        getLog().info("Removing temporary local checksum file " + tempFile.getAbsolutePath());
+                        tempFile.delete();
+                        getLog().info("New checksum file was uploaded to the remote machine");
+                    }
+                    if (touchWebXml) {
+                        session.executeRemoteCommand("touch " + Utils.linuxPath(remoteAppRoot) + "/WEB-INF/web.xml");
+                        getLog().info("web.xml was touched");
+                    } else {
+                        getLog().info("web.xml was not touched because touchWebXml is " + touchWebXml);
+                    }
+                    if (nginxCacheDir != null && !nginxCacheDir.isEmpty()) {
+                        Path nginxCache = Paths.get(nginxCacheDir);
+                        String nginxCacheNode = Utils.linuxPath(nginxCache);
+                        if (!folderExists(sftpClient, nginxCacheNode)) {
+                            getLog().info("Nginx cache dir " + Utils.linuxPath(nginxCache) + " doesn't exist");
+                        } else {
+                            SftpClient.CloseableHandle nginxCacheDirHandle = sftpClient.openDir(nginxCacheNode);
+                            Iterable<SftpClient.DirEntry> dirEntries = sftpClient.listDir(nginxCacheDirHandle);
+                            boolean emptyDir = true;
+                            for (SftpClient.DirEntry dirEntry : dirEntries) {
+                                emptyDir = false;
+                                break;
+                            }
+                            if (emptyDir) {
+                                getLog().info("Nginx cache dir " + Utils.linuxPath(nginxCache) + " is empty");
+                            } else {
+                                String purgeCommand = "sudo /usr/bin/find " + Utils.linuxPath(nginxCache) + " -mindepth 1 -delete";
+                                getLog().info("Purging nginx cache dir with command " + purgeCommand);
+                                session.executeRemoteCommand(purgeCommand);
+                                getLog().info("Done");
+                            }
+                        }
+                    } else {
+                        getLog().info("No Nginx cache dir specified: " + nginxCacheDir + " is empty");
                     }
                 } else {
-                    getLog().info(Utils.linuxPath(remoteAppRoot) + " is empty");
+                    getLog().info("Nothing to do: local files are identical to the remote machine's ones");
                 }
             }
-            Analyzer analyzer = new Analyzer(getLog(), localAppRoot, digestLines, crc32);
-
-            Set<Path> filesToCopy = analyzer.getFilesToCopy();
-            Set<Path> filesToRemove = analyzer.getFilesToRemove();
-            if (filesToCopy != null) {
-                Utils.logFiles(getLog(), filesToCopy, "Changed files were found", Path::toString);
-
-                FileNode tempFile = world.getTemp().createTempFile();
-                getLog().info("Archive containing changed and new files will be created in temporary file " + tempFile.getName());
-                Utils.createAchive(filesToCopy, localAppRoot, tempFile.getAbsolute());
-                Node remoteTempArchive = root.node("tmp/" + tempFile.getName(), null);
-                getLog().info("Copying local file " + tempFile.getAbsolute() + " to " + remoteTempArchive.getPath());
-                tempFile.copyFile(remoteTempArchive);
-                getLog().info("Unpacking remote archive");
-                String jarOutput = root.exec("cd " + Utils.linuxPath(remoteAppRoot) + ";jar xvf /tmp/" + tempFile.getName());
-                getLog().info("Temp archive was unpacked. Removing temporary files");
-                remoteTempArchive.deleteFile();
-                tempFile.deleteFile();
-                getLog().info("Changed file(s) were uploaded to the remote machine");
-            }
-            if (filesToRemove != null) {
-                Utils.logFiles(getLog(), filesToRemove, "files must be deleted from the remote machine", Path::toString);
-
-                for (Path curFile : filesToRemove) {
-                    Path pathOfFileToDelete = remoteAppRoot.resolve(curFile);
-                    String nameOfFileToDelete = Utils.linuxPathWithoutSlash(pathOfFileToDelete);
-                    getLog().info("Removing " + Utils.linuxPath(pathOfFileToDelete));
-                    root.node(nameOfFileToDelete, null).deleteFile();
-                }
-                getLog().info("Old file(s) were deleted from the remote machine");
-            }
-            if (filesToCopy != null || filesToRemove != null) {
-                if (touchWebXml) {
-                    root.exec("touch " + Utils.linuxPath(remoteAppRoot) + "/WEB-INF/web.xml");
-                    getLog().info("web.xml was touched");
-                } else {
-                    getLog().info("web.xml was not touched because touchWebXml is " + touchWebXml);
-                }
-                SshNode nginxCacheNode = root.node(Utils.linuxPathWithoutSlash(nginxCache), null);
-                if (!nginxCacheNode.exists()) {
-                    getLog().info("Nginx cache dir " + Utils.linuxPath(nginxCache) + " doesn't exist");
-                } else if (nginxCacheNode.list().isEmpty()) {
-                    getLog().info("Nginx cache dir " + Utils.linuxPath(nginxCache) + " is empty");
-                } else {
-                    String purgeCommand = "sudo /usr/bin/find " + Utils.linuxPath(nginxCache) + " -mindepth 1 -delete";
-                    getLog().info("Purging nginx cache dir with command " + purgeCommand);
-                    root.exec(purgeCommand);
-                    getLog().info("Done");
-                }
-            } else {
-                getLog().info("Nothing to do: local files are identical to the remote machine's ones");
-            }
-            root.exec(postdeployScript);
-        } catch (IOException | JSchException e) {
+        } catch (IOException e) {
             getLog().error(e);
             e.printStackTrace();
             throw new MojoExecutionException("Error during execution of the deploy script", e);
