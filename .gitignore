@@ -9,3 +9,6 @@ target
 *.iml
 node_modules
 settings.xml
+/.idea/compiler.xml
+/.idea/modules.xml
+/.idea/jarRepositories.xml
