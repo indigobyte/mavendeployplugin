@@ -64,7 +64,7 @@ public class FolderSynchronizer extends AbstractMojo {
         for (Path path : filesToCopy) {
             Path sourcePath = sourceFolderPath.resolve(path).normalize();
             Path targetPath = destFolderPath.resolve(path).normalize();
-            if (targetPath.toFile().isFile()) {
+            if (sourcePath.toFile().isFile()) {
                 if (targetPath.toFile().isDirectory()) {
                     try {
                         getLog().debug("Deleting path " + targetPath);
